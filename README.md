@@ -7,6 +7,7 @@ Simple, lightweight file browser for Ubuntu servers with:
 - Configurable allowed roots via YAML
 - Directory listing with sizes
 - Image preview next to the list
+- Video preview with HTML5 video player
 - Syntax-highlighted preview for common text formats (txt/json/md/yaml/etc.) via Highlight.js
 - Interactive `.ply` mesh/point cloud preview with vertex colors using Three.js
 - Keyboard navigation (Up/Down, Enter to open, Backspace to go up, i to refresh preview)

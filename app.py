@@ -95,11 +95,13 @@ def create_app() -> Flask:
 						is_dir = entry.is_dir(follow_symlinks=False)
 						mime, _ = mimetypes.guess_type(entry.name)
 						is_image = (not is_dir) and isinstance(mime, str) and mime.startswith("image/")
+						is_video = (not is_dir) and isinstance(mime, str) and mime.startswith("video/")
 						entries.append({
 							"name": entry.name,
 							"is_dir": is_dir,
 							"size": size,
 							"is_image": is_image,
+							"is_video": is_video,
 							"mime": mime,
 							"mtime": stat.st_mtime
 						})
