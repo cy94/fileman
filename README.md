@@ -1,6 +1,8 @@
 File Viewer (Flask + Vue)
 =========================
 
+![screenshot](img/screenshot2.png)
+
 Simple, lightweight file browser for Ubuntu servers with:
 - Configurable allowed roots via YAML
 - Directory listing with sizes
