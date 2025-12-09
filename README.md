@@ -1,9 +1,9 @@
-File Viewer (Flask + Vue)
+fileman
 =========================
+Simple web file browser to view images, text files, 3D point clouds and meshes and videos:
 
 ![screenshot](img/screenshot2.png)
 
-Simple, lightweight file browser for Ubuntu servers with:
 - Configurable allowed roots via YAML
 - Directory listing with sizes
 - Image preview next to the list
