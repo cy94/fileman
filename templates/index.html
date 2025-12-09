@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+	<meta http-equiv="Pragma" content="no-cache" />
+	<meta http-equiv="Expires" content="0" />
+	<title>File Viewer</title>
+	<!-- Bootstrap CSS: prefer local file first -->
+	<link href="{{ url_for('static', filename='bootstrap.min.css') }}?v=1" rel="stylesheet">
+	<!-- Bootstrap CSS (primary CDN as backup) -->
+	<link id="bootstrap-cdn" href="https://unpkg.com/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+	<script>
+		// Fallback loader: if Bootstrap styles aren't applied, try alternative CDNs, then local file
+		(function() {
+			function bootstrapLoaded() {
+				var probe = document.createElement('button');
+				probe.className = 'btn btn-primary';
+				probe.style.position = 'absolute';
+				probe.style.visibility = 'hidden';
+				document.head.appendChild(probe);
+				var computed = window.getComputedStyle(probe);
+				var ok = computed && computed.paddingLeft && parseFloat(computed.paddingLeft) > 0;
+				document.head.removeChild(probe);
+				return ok;
+			}
+			function addCss(href) {
+				var l = document.createElement('link');
+				l.rel = 'stylesheet';
+				l.href = href;
+				document.head.appendChild(l);
+			}
+			function tryFallbacks() {
+				if (bootstrapLoaded()) return;
+				// Prefer local first for air-gapped/offline servers
+				addCss('/static/bootstrap.min.css');
+				setTimeout(function() {
+					if (bootstrapLoaded()) return;
+					addCss('https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css');
+				}, 800);
+			}
+			// Try fallbacks after onload
+			window.addEventListener('load', function() {
+				setTimeout(tryFallbacks, 100);
+			});
+		})();
+	</script>
+	<!-- Custom minimal styles (via Flask static to avoid cache issues) -->
+	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1" />
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css?v=2" crossorigin="anonymous" referrerpolicy="no-referrer" />
+	<!-- Vue 3 via CDN -->
+	<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/markdown.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/ini.min.js?v=2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	<!-- Import map to resolve bare specifiers used by Three.js JSM modules -->
+	<script type="importmap">
+	{
+		"imports": {
+			"three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+			"three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+		}
+	}
+	</script>
+	<script type="module">
+		// Load Three.js and helpers via ES modules to avoid deprecated globals
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+		import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
+
+		// Expose on window for the existing viewer code.
+		// Clone to avoid mutating the module namespace (which is non-extensible).
+		window.THREE = Object.assign({}, THREE, {
+			OrbitControls,
+			PLYLoader
+		});
+		console.log('✓ Three.js ES modules loaded (three + OrbitControls + PLYLoader)');
+	</script>
+</head>
+<body class="bg-body">
+	<div id="app" class="container-fluid py-3">
+		<div class="bg-light border rounded-3 p-3 mb-3">
+			<form class="row g-2 align-items-center">
+				<div class="col-auto">
+					<button type="button" class="btn btn-outline-secondary" @click="goUp" :disabled="!parentPath">Up</button>
+				</div>
+				<div class="col-auto">
+					<label class="col-form-label" for="rootSelect">Root</label>
+				</div>
+				<div class="col-md-4">
+					<select id="rootSelect" class="form-select" v-model="selectedRoot" @change="onRootChange">
+						<option v-for="r in allowedRoots" :key="r" :value="r">[[ r ]]</option>
+					</select>
+				</div>
+				<div class="col d-flex">
+					<div class="input-group">
+						<input type="text" class="form-control" placeholder="Paste an absolute root path" v-model="rootPathInput" @keyup.enter="applyRootInput">
+						<button class="btn btn-outline-secondary" type="button" @click="openBrowse">Browse</button>
+						<button class="btn btn-primary" type="button" @click="applyRootInput">Go</button>
+					</div>
+				</div>
+			</form>
+			<small class="text-muted d-block mt-2">
+				Keyboard: Up/Down to select, Enter to open, Backspace to go up, i to preview image
+			</small>
+		</div>
+		<!-- Browse Root Modal -->
+		<div class="modal fade" id="browseRootModal" tabindex="-1" aria-hidden="true">
+			<div class="modal-dialog modal-lg modal-dialog-scrollable">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title">Browse for Root</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<div class="input-group mb-2">
+							<input type="text" class="form-control" v-model="browsePath" @keyup.enter="loadBrowse(browsePath)">
+							<button class="btn btn-outline-secondary" type="button" @click="loadBrowse(browseParent)" :disabled="!browseParent">Up</button>
+							<button class="btn btn-outline-primary" type="button" @click="loadBrowse(browsePath)">Go</button>
+						</div>
+						<div class="list-group">
+							<button
+								type="button"
+								class="list-group-item list-group-item-action"
+								:class="{'active': idx === browseSelectedIndex}"
+								v-for="(e, idx) in browseEntries"
+								:key="e.name"
+								@click="browseSelectedIndex = idx"
+								@dblclick="openBrowseDir(idx)"
+							>
+								[[ e.name ]]
+							</button>
+							<div v-if="browseEntries.length === 0" class="list-group-item text-muted">No subdirectories</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="button" class="btn btn-primary" @click="confirmBrowse">Choose</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="viewer-panels d-flex align-items-stretch" tabindex="0" data-fileviewer-focus @keydown="onKeyDown">
+			<div class="resizable-panel card mb-0" :style="{ width: leftPanelWidthPx + 'px' }">
+				<div class="card-header">
+					<div class="mb-2 pb-2 border-bottom">
+						<small class="text-muted d-flex align-items-center">
+							<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" class="me-1" aria-hidden="true">
+								<path d="M.5 3l.04.87a1.99 1.99 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9.81a2 2 0 0 0 1.991-1.819l.637-7a1.99 1.99 0 0 0-.342-1.311L12.5 3H.5zm.369 1L2 4.5v6.369A1 1 0 0 0 2.826 12h6.988A1 1 0 0 0 11 10.869V4.5L12.131 4H.869z"/>
+							</svg>
+							<span class="text-truncate" :title="currentPath">[[ currentPath || 'Loading...' ]]</span>
+						</small>
+					</div>
+					<div class="d-flex align-items-center">
+						<div class="flex-grow-1">Name</div>
+						<div style="width: 120px;" class="text-end">Size</div>
+					</div>
+					<div class="mt-2">
+						<input type="text" class="form-control form-control-sm" placeholder="Search files and folders" v-model="searchTerm">
+					</div>
+				<div class="mt-2 d-flex align-items-center justify-content-between gap-2 flex-wrap">
+					<span class="small text-muted">
+						Total: [[ getTotalItems() ]] | Folders: [[ getNumFolders() ]] | Files: [[ getNumFiles() ]]
+					</span>
+					<div class="d-flex gap-3 flex-wrap justify-content-end align-items-center">
+						<div class="form-check form-switch m-0">
+							<input class="form-check-input" type="checkbox" id="toggleMtime" v-model="showModifiedTimes">
+							<label class="form-check-label small text-muted" for="toggleMtime">Show modified time</label>
+						</div>
+						<button
+							type="button"
+							class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1 refresh-btn"
+							@click="refreshList"
+							:disabled="isLoadingList"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 1 0-.908-.417A6 6 0 1 0 2.343 4H1.5a.5.5 0 0 0 0 1h2.75A.75.75 0 0 0 5 4.25V1.5a.5.5 0 0 0-1 0v1.528A6 6 0 0 1 8 3"/>
+							</svg>
+							<span>Refresh</span>
+							<span v-if="isLoadingList" class="spinner-border spinner-border-sm ms-1" role="status" aria-hidden="true"></span>
+						</button>
+						<button
+							type="button"
+							class="btn btn-outline-secondary btn-sm copy-selected-btn d-flex align-items-center gap-1"
+							@click="copyCurrentPath"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M10 1.5a.5.5 0 0 1 .5-.5h3A1.5 1.5 0 0 1 15 2.5v9a1.5 1.5 0 0 1-1.5 1.5H13v-1h.5a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5V3h-1V1.5z"/>
+								<path d="M3.5 4A1.5 1.5 0 0 0 2 5.5v7A1.5 1.5 0 0 0 3.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 10.5 4zm0-1h7A2.5 2.5 0 0 1 13 5.5v7A2.5 2.5 0 0 1 10.5 15h-7A2.5 2.5 0 0 1 1 12.5v-7A2.5 2.5 0 0 1 3.5 3"/>
+							</svg>
+							<span>Copy Path</span>
+						</button>
+					</div>
+				</div>
+				</div>
+				<div class="list-group list-group-flush file-list-body" ref="listBody">
+					<button
+						type="button"
+						class="list-group-item list-group-item-action d-flex align-items-center"
+						:class="{'active': idx === selectedIndex}"
+						v-for="(e, idx) in visibleEntries"
+						:key="e.name"
+						@click="onRowClick(idx)"
+						@dblclick="openSelected(idx)"
+					>
+						<div class="flex-grow-1 text-truncate">
+							<div class="d-flex align-items-center gap-2">
+								<span class="badge" :class="e.is_dir ? 'text-bg-success' : (e.is_image ? 'text-bg-warning' : 'text-bg-secondary')">
+									[[ e.is_dir ? 'DIR' : (e.is_image ? 'IMG' : 'FILE') ]]
+								</span>
+								<span class="text-break text-truncate">[[ e.name ]]</span>
+								<span v-if="showModifiedTimes" class="small text-truncate text-muted" :class="{'text-white': idx === selectedIndex}">
+									[[ formatMtime(e) || '—' ]]
+								</span>
+							</div>
+						</div>
+						<div class="entry-meta d-flex align-items-center justify-content-end gap-2" style="width: 150px;">
+							<div class="text-end entry-size">
+								<span v-text="e.is_dir ? '-' : humanSize(e.size)"></span>
+							</div>
+							<span
+								role="button"
+								tabindex="-1"
+								class="copy-path-icon"
+								:class="{'copied': isPathCopied(e)}"
+								:title="isPathCopied(e) ? 'Copied!' : 'Copy full path'"
+								@click.stop="copyEntryPath(e)"
+								aria-label="Copy full path"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+									<path d="M10 1.5a.5.5 0 0 1 .5-.5h3A1.5 1.5 0 0 1 15 2.5v9a1.5 1.5 0 0 1-1.5 1.5H13v-1h.5a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5V3h-1V1.5z"/>
+									<path d="M3.5 4A1.5 1.5 0 0 0 2 5.5v7A1.5 1.5 0 0 0 3.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 10.5 4zm0-1h7A2.5 2.5 0 0 1 13 5.5v7A2.5 2.5 0 0 1 10.5 15h-7A2.5 2.5 0 0 1 1 12.5v-7A2.5 2.5 0 0 1 3.5 3"/>
+								</svg>
+							</span>
+						</div>
+					</button>
+					<div v-if="visibleEntries.length === 0" class="list-group-item text-muted">No matches</div>
+				</div>
+			</div>
+			<div class="splitter" @mousedown="startDrag"></div>
+			<div class="preview-panel card mb-0 flex-grow-1">
+				<div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+					<div class="d-flex flex-column">
+						<span>Preview</span>
+						<span v-if="previewMode === 'image' && previewImageDimensionsText" class="text-muted small">
+							[[ previewImageDimensionsText ]]
+						</span>
+					</div>
+					<div class="btn-group btn-group-sm" role="group" v-if="previewMode === 'image'">
+						<button type="button" class="btn btn-outline-secondary" @click="zoomOut" :disabled="zoomScale <= minZoom + 0.001">-</button>
+						<button type="button" class="btn btn-outline-secondary" @click="resetZoom">[[ zoomPercent ]]%</button>
+						<button type="button" class="btn btn-outline-secondary" @click="zoomIn" :disabled="zoomScale >= maxZoom - 0.001">+</button>
+					</div>
+					<div v-else-if="previewMode === 'ply'" class="d-flex align-items-center gap-3 flex-wrap">
+						<div class="text-muted small">3D preview</div>
+						<div class="d-flex align-items-center gap-2">
+							<label class="form-label mb-0 small text-muted">Point size</label>
+							<input
+								type="range"
+								class="form-range mb-0"
+								style="width: 160px;"
+								:min="minPointSize"
+								:max="maxPointSize"
+								:step="0.001"
+								:value="pointSize"
+								@input="e => setPointSize(e.target.value)"
+							/>
+							<span class="small text-muted" style="min-width: 3.5rem;">[[ pointSize.toFixed(3) ]]</span>
+						</div>
+					</div>
+					<div v-else class="text-muted small">
+						[[ previewHeaderText ]]
+					</div>
+				</div>
+				<div class="card-body bg-white p-0 preview-body">
+					<div v-if="previewMode === 'image'" class="preview-canvas" @wheel.prevent="onPreviewWheel">
+						<img
+							:src="previewImageUrl"
+							alt="Preview"
+							:style="imageStyle"
+							@load="onPreviewImageLoad"
+							@error="onPreviewImageError"
+						/>
+					</div>
+					<div v-else-if="previewMode === 'text'" class="preview-text position-relative">
+						<div v-if="previewLoading" class="preview-overlay">Loading text preview…</div>
+						<pre class="m-0"><code ref="textCodeBlock" class="hljs" :class="previewTextLanguage ? 'language-' + previewTextLanguage : ''" v-text="previewText || ' '"></code></pre>
+						<div v-if="previewTextTruncated && !previewError" class="preview-info alert alert-warning rounded-0 mb-0">
+							Preview truncated to [[ maxTextPreviewBytes ]] bytes.
+						</div>
+					</div>
+					<div v-else-if="previewMode === 'ply'" class="preview-3d position-relative">
+						<div class="preview-3d-canvas" ref="threeContainer"></div>
+						<div v-if="previewLoading" class="preview-overlay">Loading mesh…</div>
+						<div v-else-if="previewError" class="preview-overlay text-danger">[[ previewError ]]</div>
+					</div>
+					<div v-else class="preview-placeholder text-muted">
+						[[ previewPlaceholderText ]]
+					</div>
+				</div>
+				<div v-if="previewMode !== 'ply' && previewError" class="preview-info alert alert-danger rounded-0 mb-0">
+					[[ previewError ]]
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script>
+	const { createApp, onMounted, ref, computed, watch, nextTick } = Vue;
+	const TEXT_PREVIEW_EXTENSIONS = new Set([
+		'txt','log','json','md','markdown','yaml','yml','ini','cfg','conf','csv','py','js','ts','sh','bash','toml'
+	]);
+	const TEXT_LANGUAGE_HINTS = {
+		json: 'json',
+		md: 'markdown',
+		markdown: 'markdown',
+		yml: 'yaml',
+		yaml: 'yaml',
+		py: 'python',
+		js: 'javascript',
+		ts: 'javascript',
+		sh: 'bash',
+		bash: 'bash',
+		ini: 'ini',
+		cfg: 'ini',
+		conf: 'ini'
+	};
+	const PLY_EXTENSIONS = new Set(['ply']);
+	const DEFAULT_TEXT_PREVIEW_BYTES = 512 * 1024;
+
+	const app = createApp({
+		setup() {
+			const allowedRoots = ref([]);
+			const selectedRoot = ref('');
+			const rootPathInput = ref('');
+			const leftPanelWidthPx = ref(520);
+			const isDragging = ref(false);
+			const currentPath = ref('');
+			const parentPath = ref(null);
+			const entries = ref([]);
+			const isLoadingList = ref(false);
+			const searchTerm = ref('');
+			const visibleEntries = computed(() => {
+				const term = (searchTerm.value || '').toLowerCase().trim();
+				if (!term) return entries.value;
+				return entries.value.filter(e => e.name.toLowerCase().includes(term));
+			});
+			function getTotalItems() {
+				return entries.value.length;
+			}
+			function getNumFolders() {
+				return entries.value.filter(e => e.is_dir).length;
+			}
+			function getNumFiles() {
+				return entries.value.filter(e => !e.is_dir).length;
+			}
+			function getFileExtension(name = '') {
+				const idx = name.lastIndexOf('.');
+				return idx >= 0 ? name.slice(idx + 1).toLowerCase().trim() : '';
+			}
+			function formatMtime(entry) {
+				const ts = entry && typeof entry.mtime === 'number' ? entry.mtime : null;
+				if (!ts) return '';
+				try {
+					return new Date(ts * 1000).toLocaleString();
+				} catch (e) {
+					return '';
+				}
+			}
+			function getEntryMime(entryOrMime) {
+				if (typeof entryOrMime === 'string') return entryOrMime;
+				if (!entryOrMime || typeof entryOrMime.mime !== 'string') return '';
+				return entryOrMime.mime;
+			}
+			function isTextPreviewFile(entryOrName) {
+				const name = typeof entryOrName === 'string' ? entryOrName : (entryOrName && entryOrName.name) || '';
+				return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(name));
+			}
+			function isPlyFile(entryOrName) {
+				const name = typeof entryOrName === 'string' ? entryOrName : (entryOrName && entryOrName.name) || '';
+				return PLY_EXTENSIONS.has(getFileExtension(name));
+			}
+			function isLikelyTextMime(mime = '') {
+				if (!mime || typeof mime !== 'string') return false;
+				if (mime.startsWith('text/')) return true;
+				return [
+					'application/json',
+					'application/javascript',
+					'application/x-javascript',
+					'application/xml',
+					'application/x-sh',
+					'application/x-yaml',
+					'application/x-toml'
+				].includes(mime);
+			}
+			function shouldPreviewAsText(entry) {
+				if (!entry || entry.is_dir) return false;
+				if (entry.is_image || isPlyFile(entry)) return false;
+				if (isTextPreviewFile(entry)) return true;
+				const mime = getEntryMime(entry);
+				if (isLikelyTextMime(mime)) return true;
+				return false;
+			}
+			function getLanguageHint(entry) {
+				const ext = getFileExtension(entry?.name || '');
+				if (ext && TEXT_LANGUAGE_HINTS[ext]) {
+					return TEXT_LANGUAGE_HINTS[ext];
+				}
+				const mime = getEntryMime(entry) || '';
+				if (mime.includes('json')) return 'json';
+				if (mime.includes('markdown') || mime.includes('md')) return 'markdown';
+				if (mime.includes('yaml') || mime.includes('yml')) return 'yaml';
+				if (mime.includes('javascript') || mime.includes('ecmascript')) return 'javascript';
+				if (mime.includes('python')) return 'python';
+				if (mime.includes('shell') || mime.includes('bash')) return 'bash';
+				return 'plaintext';
+			}
+			function supportsInlinePreview(entry) {
+				if (!entry || entry.is_dir) return false;
+				return entry.is_image || shouldPreviewAsText(entry) || isPlyFile(entry);
+			}
+			function resetPreviewToNone({ bumpToken = true } = {}) {
+				if (bumpToken) {
+					activePreviewToken += 1;
+				}
+				previewMode.value = 'none';
+				previewImageUrl.value = '';
+				previewImageDims.value = { width: null, height: null };
+				previewText.value = '';
+				previewTextLanguage.value = '';
+				previewTextTruncated.value = false;
+				previewError.value = '';
+				previewLoading.value = false;
+				zoomScale.value = 1;
+				lastPreviewPath = '';
+				disposeThreeScene();
+			}
+			function applyHighlightToPreview() {
+				if (typeof window === 'undefined' || !window.hljs) return;
+				nextTick(() => {
+					if (previewMode.value !== 'text') return;
+					if (textCodeBlock.value) {
+						try {
+							window.hljs.highlightElement(textCodeBlock.value);
+						} catch (err) {
+							// ignore highlight errors
+						}
+					}
+				});
+			}
+			const selectedIndex = ref(0);
+			const previewImageUrl = ref('');
+			const previewMode = ref('none');
+			const previewImageDims = ref({ width: null, height: null });
+			const previewLoading = ref(false);
+			const previewError = ref('');
+			const previewText = ref('');
+			const previewTextLanguage = ref('');
+			const previewTextTruncated = ref(false);
+			const maxTextPreviewBytes = ref(DEFAULT_TEXT_PREVIEW_BYTES);
+			const textCodeBlock = ref(null);
+			const threeContainer = ref(null);
+			const selectedEntry = computed(() => {
+				if (selectedIndex.value < 0 || selectedIndex.value >= visibleEntries.value.length) return null;
+				return visibleEntries.value[selectedIndex.value];
+			});
+			const previewPlaceholderText = computed(() => {
+				if (!selectedEntry.value) return 'Select a file to preview (images, text, .ply)';
+				if (selectedEntry.value.is_dir) return 'Folders cannot be previewed.';
+				return 'Preview not available for this file type.';
+			});
+			const previewHeaderText = computed(() => {
+				if (previewMode.value === 'text') return previewLoading.value ? 'Loading text…' : 'Text preview';
+				if (previewMode.value === 'ply') return previewLoading.value ? 'Loading mesh…' : '3D preview';
+				return 'Select a file';
+			});
+			const zoomScale = ref(1);
+			const minZoom = 0.25;
+			const maxZoom = 4;
+			const zoomStep = 0.2;
+			const zoomPercent = computed(() => Math.round(zoomScale.value * 100));
+			const imageStyle = computed(() => ({
+				transform: `scale(${zoomScale.value})`,
+				transformOrigin: 'center center'
+			}));
+			const pointSize = ref(0.01);
+			const minPointSize = 0.001;
+			const maxPointSize = 0.1;
+			const showModifiedTimes = ref(false);
+			const previewImageDimensionsText = computed(() => {
+				const dims = previewImageDims.value || {};
+				if (!dims.width || !dims.height) return '';
+				return `height: ${dims.height}, width: ${dims.width}`;
+			});
+			const listBody = ref(null);
+			const browsePath = ref('/');
+			const browseEntries = ref([]);
+			const browseParent = ref(null);
+			const browseSelectedIndex = ref(-1);
+			let browseModal = null;
+			let lastPreviewPath = '';
+			const lastCopiedPath = ref('');
+			let copyResetTimer = null;
+			let activePreviewToken = 0;
+			let threeRenderer = null;
+			let threeScene = null;
+			let threeCamera = null;
+			let threeControls = null;
+			let threeFrameId = null;
+			let threeResizeCleanup = null;
+			let threeCurrentObject = null;
+			let threeAxesHelper = null;
+
+			function fetchConfig() {
+				return fetch('/api/config').then(r => r.json()).then(cfg => {
+					allowedRoots.value = cfg.allowed_roots || [];
+					if (!selectedRoot.value && allowedRoots.value.length > 0) {
+						selectedRoot.value = allowedRoots.value[0];
+					}
+					rootPathInput.value = selectedRoot.value || '';
+				});
+			}
+
+			function loadList(path = '', options = {}) {
+				const { preserveSearch = false, preserveSelection = false, focusEntryName = null } = options;
+				const previousSelectionName = preserveSelection && selectedEntry.value ? selectedEntry.value.name : null;
+				isLoadingList.value = true;
+				const params = new URLSearchParams();
+				params.set('root', selectedRoot.value || '');
+				if (path) params.set('path', path);
+				return fetch('/api/list?' + params.toString())
+					.then(r => {
+						if (!r.ok) throw new Error('Failed to list: ' + r.statusText);
+						return r.json();
+					})
+					.then(data => {
+						currentPath.value = data.path;
+						parentPath.value = data.parent;
+						entries.value = data.entries || [];
+						if (!preserveSearch) {
+							searchTerm.value = '';
+						}
+						resetPreviewToNone();
+						if (entries.value.length > 0) {
+							const desiredName = focusEntryName || (preserveSelection ? previousSelectionName : null);
+							if (desiredName) {
+								const visibleIdx = visibleEntries.value.findIndex(e => e.name === desiredName);
+								selectedIndex.value = visibleIdx >= 0 ? visibleIdx : 0;
+							} else {
+								selectedIndex.value = 0;
+							}
+						} else {
+							selectedIndex.value = -1;
+						}
+						updatePreview();
+						scrollSelectedIntoView();
+					})
+					.catch(err => {
+						alert(err.message);
+					})
+					.finally(() => {
+						isLoadingList.value = false;
+					});
+			}
+
+			function onRootChange() {
+				previewImageUrl.value = '';
+				lastPreviewPath = '';
+				zoomScale.value = 1;
+				return loadList('');
+			}
+
+			function applyRootInput() {
+				const r = (rootPathInput.value || '').trim();
+				if (!r) return;
+				if (!r.startsWith('/')) {
+					alert('Please enter an absolute path as root.');
+					return;
+				}
+				selectedRoot.value = r;
+				// Add to dropdown if not present
+				if (!allowedRoots.value.includes(r)) {
+					allowedRoots.value = [...allowedRoots.value, r];
+				}
+				currentPath.value = r;
+				return loadList(r);
+			}
+
+			function loadBrowse(path = '/') {
+				const p = path || '/';
+				const params = new URLSearchParams();
+				params.set('root', '/');
+				params.set('path', p);
+				return fetch('/api/list?' + params.toString())
+					.then(r => {
+						if (!r.ok) throw new Error('Failed to browse: ' + r.statusText);
+						return r.json();
+					})
+					.then(data => {
+						browsePath.value = data.path;
+						browseParent.value = data.parent;
+						browseEntries.value = (data.entries || []).filter(e => e.is_dir);
+						browseSelectedIndex.value = browseEntries.value.length ? 0 : -1;
+					})
+					.catch(err => alert(err.message));
+			}
+
+			function openBrowse() {
+				if (!browseModal) {
+					const el = document.getElementById('browseRootModal');
+					browseModal = new bootstrap.Modal(el);
+				}
+				loadBrowse(rootPathInput.value || selectedRoot.value || '/').then(() => {
+					browseModal.show();
+				});
+			}
+
+			function openBrowseDir(idx) {
+				if (idx < 0 || idx >= browseEntries.value.length) return;
+				const name = browseEntries.value[idx].name;
+				const next = (browsePath.value.endsWith('/') ? browsePath.value : browsePath.value + '/') + name;
+				return loadBrowse(next);
+			}
+
+			function confirmBrowse() {
+				let chosen = browsePath.value;
+				if (browseSelectedIndex.value >= 0 && browseSelectedIndex.value < browseEntries.value.length) {
+					const name = browseEntries.value[browseSelectedIndex.value].name;
+					chosen = (browsePath.value.endsWith('/') ? browsePath.value : browsePath.value + '/') + name;
+				}
+				rootPathInput.value = chosen;
+				applyRootInput();
+				if (browseModal) browseModal.hide();
+			}
+
+			function goToPath() {
+				return loadList(currentPath.value);
+			}
+
+			function goUp() {
+				if (parentPath.value) {
+					const parts = (currentPath.value || '').split('/').filter(Boolean);
+					const previousFolderName = parts.length ? parts[parts.length - 1] : null;
+					return loadList(parentPath.value, { focusEntryName: previousFolderName });
+				}
+			}
+
+			function humanSize(bytes) {
+				if (bytes === 0) return '0 B';
+				const units = ['B','KB','MB','GB','TB'];
+				const i = Math.floor(Math.log(bytes) / Math.log(1024));
+				return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+			}
+
+			function setSelected(idx) {
+				selectedIndex.value = idx;
+				updatePreview();
+				scrollSelectedIntoView();
+			}
+			
+			function onRowClick(idx) {
+				setSelected(idx);
+				if (idx >= 0 && idx < visibleEntries.value.length) {
+					const item = visibleEntries.value[idx];
+					if (item && item.is_dir) {
+						openSelected(idx);
+					}
+				}
+			}
+
+			function openSelected(idx = null) {
+				if (idx === null) idx = selectedIndex.value;
+				if (idx < 0 || idx >= visibleEntries.value.length) return;
+				const item = visibleEntries.value[idx];
+				if (item.is_dir) {
+					const nextPath = currentPath.value + (currentPath.value.endsWith('/') ? '' : '/') + item.name;
+					loadList(nextPath);
+				} else if (supportsInlinePreview(item)) {
+					setSelected(idx);
+					updatePreview();
+				} else {
+					const url = buildFileUrl(getEntryFullPath(item));
+					window.open(url, '_blank');
+				}
+			}
+			function refreshList() {
+				const targetPath = currentPath.value || '';
+				return loadList(targetPath, { preserveSearch: true, preserveSelection: true });
+			}
+
+			function buildFileUrl(path) {
+				const params = new URLSearchParams();
+				params.set('root', selectedRoot.value || '');
+				params.set('path', path);
+				return '/api/file?' + params.toString();
+			}
+
+			function getEntryFullPath(entry) {
+				if (!entry) return '';
+				const base = currentPath.value || '';
+				if (!base) return entry.name;
+				const needsSlash = base.endsWith('/') || base === '';
+				return (needsSlash ? base : base + '/') + entry.name;
+			}
+
+			function fallbackCopyText(text) {
+				return new Promise((resolve, reject) => {
+					try {
+						const ta = document.createElement('textarea');
+						ta.value = text;
+						ta.style.position = 'fixed';
+						ta.style.top = '-1000px';
+						ta.style.left = '-1000px';
+						document.body.appendChild(ta);
+						ta.focus();
+						ta.select();
+						const ok = document.execCommand('copy');
+						document.body.removeChild(ta);
+						ok ? resolve() : reject(new Error('execCommand failed'));
+					} catch (err) {
+						reject(err);
+					}
+				});
+			}
+
+			function copyEntryPath(entry) {
+				const path = getEntryFullPath(entry);
+				if (!path) return;
+				const clipboard = typeof navigator !== 'undefined' && navigator.clipboard ? navigator.clipboard.writeText(path) : fallbackCopyText(path);
+				Promise.resolve(clipboard)
+					.then(() => {
+						lastCopiedPath.value = path;
+						if (copyResetTimer) clearTimeout(copyResetTimer);
+						copyResetTimer = setTimeout(() => {
+							if (lastCopiedPath.value === path) {
+								lastCopiedPath.value = '';
+							}
+						}, 2000);
+					})
+					.catch(() => {
+						alert('Unable to copy path automatically. Please copy it manually:\n' + path);
+					});
+			}
+
+			function isPathCopied(entry) {
+				if (!entry) return false;
+				return lastCopiedPath.value === getEntryFullPath(entry);
+			}
+
+			function copySelectedPath() {
+				if (!selectedEntry.value) {
+					alert('Select a file or folder first.');
+					return;
+				}
+				copyEntryPath(selectedEntry.value);
+			}
+
+			function copyCurrentPath() {
+				const path = currentPath.value || '';
+				if (!path) {
+					alert('No current directory path available.');
+					return;
+				}
+				const clipboard = typeof navigator !== 'undefined' && navigator.clipboard ? navigator.clipboard.writeText(path) : fallbackCopyText(path);
+				Promise.resolve(clipboard)
+					.then(() => {
+						lastCopiedPath.value = path;
+						if (copyResetTimer) clearTimeout(copyResetTimer);
+						copyResetTimer = setTimeout(() => {
+							if (lastCopiedPath.value === path) {
+								lastCopiedPath.value = '';
+							}
+						}, 2000);
+					})
+					.catch(() => {
+						alert('Unable to copy path automatically. Please copy it manually:\n' + path);
+					});
+			}
+
+			function updatePreview() {
+				activePreviewToken += 1;
+				const token = activePreviewToken;
+				previewError.value = '';
+				previewLoading.value = false;
+				previewText.value = '';
+				previewTextLanguage.value = '';
+				previewTextTruncated.value = false;
+				const idx = selectedIndex.value;
+				if (idx < 0 || idx >= visibleEntries.value.length) {
+					resetPreviewToNone({ bumpToken: false });
+					return;
+				}
+				const item = visibleEntries.value[idx];
+				if (!item || item.is_dir) {
+					resetPreviewToNone({ bumpToken: false });
+					return;
+				}
+				if (!item.is_image) {
+					previewImageDims.value = { width: null, height: null };
+				}
+				const fullPath = getEntryFullPath(item);
+				if (item.is_image) {
+					previewMode.value = 'image';
+					previewImageDims.value = { width: null, height: null };
+					const nextUrl = buildFileUrl(fullPath);
+					previewImageUrl.value = nextUrl;
+					if (fullPath !== lastPreviewPath) {
+						zoomScale.value = 1;
+						lastPreviewPath = fullPath;
+					}
+					previewLoading.value = false;
+					previewError.value = '';
+					disposeThreeScene();
+					return;
+				}
+				previewImageUrl.value = '';
+				lastPreviewPath = '';
+				if (shouldPreviewAsText(item)) {
+					previewMode.value = 'text';
+					previewLoading.value = true;
+					disposeThreeScene();
+					const params = new URLSearchParams();
+					params.set('root', selectedRoot.value || '');
+					params.set('path', fullPath);
+					fetch('/api/text_preview?' + params.toString())
+						.then(r => {
+							if (!r.ok) throw new Error('Failed to load text preview: ' + r.statusText);
+							return r.json();
+						})
+						.then(data => {
+							if (token !== activePreviewToken) return;
+							previewLoading.value = false;
+							previewText.value = data.content || '';
+							previewTextTruncated.value = Boolean(data.truncated);
+							maxTextPreviewBytes.value = typeof data.max_bytes === 'number' ? data.max_bytes : DEFAULT_TEXT_PREVIEW_BYTES;
+							previewTextLanguage.value = getLanguageHint(item);
+							applyHighlightToPreview();
+						})
+						.catch(err => {
+							if (token !== activePreviewToken) return;
+							previewLoading.value = false;
+							previewError.value = err && err.message ? err.message : 'Unable to load text preview.';
+						});
+					return;
+				}
+				if (isPlyFile(item)) {
+					previewMode.value = 'ply';
+					previewLoading.value = true;
+					zoomScale.value = 1;
+					loadPlyPreview(fullPath, token);
+					return;
+				}
+				resetPreviewToNone({ bumpToken: false });
+			}
+			function onPreviewImageLoad(event) {
+				const img = event?.target;
+				if (!img) return;
+				const width = Number(img.naturalWidth) || null;
+				const height = Number(img.naturalHeight) || null;
+				previewImageDims.value = { width, height };
+			}
+			function onPreviewImageError() {
+				previewImageDims.value = { width: null, height: null };
+			}
+			function loadPlyPreview(fullPath, token) {
+				if (typeof window === 'undefined' || typeof window.THREE === 'undefined') {
+					previewLoading.value = false;
+					previewError.value = 'Three.js is not available.';
+					previewMode.value = 'none';
+					return;
+				}
+				
+				// Wait for PLYLoader to be available (scripts might still be loading)
+				let retryCount = 0;
+				const maxRetries = 50; // 10 seconds total (50 * 200ms)
+				
+				function tryLoad() {
+					if (token !== activePreviewToken) return;
+					
+					// Check for PLYLoader
+					let PLYLoader = THREE.PLYLoader;
+					
+					if (!PLYLoader) {
+						retryCount++;
+						if (retryCount < maxRetries) {
+							// Retry after a short delay
+							setTimeout(tryLoad, 200);
+							return;
+						} else {
+							// Give up after max retries
+							previewLoading.value = false;
+							previewError.value = 'Three.js PLYLoader failed to load. Please refresh the page.';
+							previewMode.value = 'none';
+							return;
+						}
+					}
+					
+					// PLYLoader is available, proceed with loading
+					loadPlyFile(fullPath, token, PLYLoader);
+				}
+				
+				tryLoad();
+			}
+			
+			function loadPlyFile(fullPath, token, PLYLoader) {
+				// Wait for Vue to render the DOM before checking for container
+				nextTick(() => {
+					if (token !== activePreviewToken) return;
+					if (!threeContainer.value) {
+						previewLoading.value = false;
+						previewError.value = '3D preview container unavailable.';
+						previewMode.value = 'none';
+						return;
+					}
+					if (!initThreeScene()) {
+						previewLoading.value = false;
+						previewError.value = 'Unable to initialize 3D renderer.';
+						previewMode.value = 'none';
+						return;
+					}
+					const loader = new PLYLoader();
+					const url = buildFileUrl(fullPath);
+					loader.load(
+						url,
+						geometry => {
+							if (token !== activePreviewToken) return;
+							previewLoading.value = false;
+							if (!geometry) {
+								previewError.value = 'PLY file appears to be empty.';
+								return;
+							}
+							displayPlyGeometry(geometry);
+						},
+						undefined,
+						err => {
+							if (token !== activePreviewToken) return;
+							previewLoading.value = false;
+							previewError.value = err && err.message ? err.message : 'Failed to load PLY file.';
+							disposeThreeScene();
+							previewMode.value = 'none';
+						}
+					);
+				});
+			}
+			function displayPlyGeometry(geometry) {
+				if (!geometry || !threeScene) {
+					previewError.value = 'Unable to render geometry.';
+					return;
+				}
+				// Rotate to approximate Open3D convention (Z-up) for the viewer.
+				if (typeof geometry.rotateX === 'function') {
+					geometry.rotateX(-Math.PI / 2);
+				}
+				const hasFaces = Boolean(geometry.index);
+				if (hasFaces && typeof geometry.computeVertexNormals === 'function') {
+					geometry.computeVertexNormals();
+				}
+				// Check for color attribute - PLYLoader may store it as 'color'
+				let colorAttribute = null;
+				if (typeof geometry.getAttribute === 'function') {
+					colorAttribute = geometry.getAttribute('color');
+				}
+				const hasColor = Boolean(colorAttribute);
+				
+				// Normalize colors if they're in 0-255 range (common in PLY files)
+				if (hasColor && colorAttribute) {
+					const colors = colorAttribute.array;
+					let needsNormalization = false;
+					// Check if colors are in 0-255 range
+					for (let i = 0; i < Math.min(colors.length, 9); i++) {
+						if (colors[i] > 1.0) {
+							needsNormalization = true;
+							break;
+						}
+					}
+					if (needsNormalization) {
+						// Normalize from 0-255 to 0-1
+						for (let i = 0; i < colors.length; i++) {
+							colors[i] = colors[i] / 255.0;
+						}
+						colorAttribute.needsUpdate = true;
+					}
+				}
+				
+				let object;
+				if (hasFaces) {
+					const material = new THREE.MeshStandardMaterial({
+						vertexColors: hasColor,
+						flatShading: !geometry.getAttribute('normal'),
+						side: THREE.DoubleSide
+					});
+					object = new THREE.Mesh(geometry, material);
+				} else {
+					const material = new THREE.PointsMaterial({
+						size: pointSize.value,
+						vertexColors: hasColor,
+						color: hasColor ? 0xffffff : 0x1976d2
+					});
+					object = new THREE.Points(geometry, material);
+				}
+				replaceThreeObject(object);
+			}
+			function replaceThreeObject(object) {
+				if (!threeScene || !object) return;
+				if (threeCurrentObject) {
+					disposeThreeObject(threeCurrentObject);
+				}
+				if (threeAxesHelper && threeScene) {
+					threeScene.remove(threeAxesHelper);
+					threeAxesHelper = null;
+				}
+				threeScene.add(object);
+				threeCurrentObject = object;
+				frameThreeObject(object);
+				addAxesHelper(object);
+				applyPointSize();
+			}
+			function disposeThreeObject(object) {
+				if (!object) return;
+				if (threeScene && object.parent === threeScene) {
+					threeScene.remove(object);
+				}
+				if (object.geometry && object.geometry.dispose) {
+					object.geometry.dispose();
+				}
+				const material = object.material;
+				if (Array.isArray(material)) {
+					material.forEach(m => m && m.dispose && m.dispose());
+				} else if (material && material.dispose) {
+					material.dispose();
+				}
+			}
+			function frameThreeObject(object) {
+				if (!object || !threeCamera) return;
+				const box = new THREE.Box3().setFromObject(object);
+				const size = box.getSize(new THREE.Vector3());
+				const center = box.getCenter(new THREE.Vector3());
+				const maxDim = Math.max(size.x, size.y, size.z) || 1;
+				const distance = maxDim * 1.5;
+				threeCamera.position.set(center.x + distance, center.y + distance, center.z + distance);
+				threeCamera.near = Math.max(distance / 100, 0.01);
+				threeCamera.far = distance * 100;
+				threeCamera.updateProjectionMatrix();
+				if (threeControls) {
+					threeControls.target.copy(center);
+					threeControls.update();
+				}
+			}
+			function addAxesHelper(object) {
+				if (!threeScene || !THREE || !object) return;
+				const box = new THREE.Box3().setFromObject(object);
+				const size = box.getSize(new THREE.Vector3());
+				const maxDim = Math.max(size.x, size.y, size.z) || 1;
+				const axesSize = maxDim * 0.5;
+				threeAxesHelper = new THREE.AxesHelper(axesSize);
+				threeAxesHelper.position.copy(box.getCenter(new THREE.Vector3()));
+				// Keep axes aligned with the Open3D-style rotation
+				if (typeof threeAxesHelper.rotateX === 'function') {
+					threeAxesHelper.rotateX(-Math.PI / 2);
+				}
+				threeScene.add(threeAxesHelper);
+			}
+			function applyPointSize() {
+				if (!threeCurrentObject) return;
+				const materials = Array.isArray(threeCurrentObject.material) ? threeCurrentObject.material : [threeCurrentObject.material];
+				materials.forEach(m => {
+					if (m && typeof m.size !== 'undefined') {
+						m.size = pointSize.value;
+						if (typeof m.needsUpdate !== 'undefined') m.needsUpdate = true;
+					}
+				});
+			}
+			function initThreeScene() {
+				disposeThreeScene();
+				if (!threeContainer.value || typeof window === 'undefined' || typeof window.THREE === 'undefined') {
+					return false;
+				}
+				const width = threeContainer.value.clientWidth || threeContainer.value.offsetWidth || 400;
+				const height = threeContainer.value.clientHeight || threeContainer.value.offsetHeight || 300;
+				threeRenderer = new THREE.WebGLRenderer({ antialias: true });
+				threeRenderer.setPixelRatio(window.devicePixelRatio || 1);
+				threeRenderer.setSize(width, height);
+				threeContainer.value.appendChild(threeRenderer.domElement);
+				threeScene = new THREE.Scene();
+				threeScene.background = new THREE.Color(0xf8f9fa);
+				threeCamera = new THREE.PerspectiveCamera(60, width / height || 1, 0.01, 5000);
+				threeCamera.position.set(0, 0, 2);
+				const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+				threeScene.add(ambient);
+				const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+				directional.position.set(5, 5, 5);
+				threeScene.add(directional);
+				if (THREE.OrbitControls) {
+					threeControls = new THREE.OrbitControls(threeCamera, threeRenderer.domElement);
+					threeControls.enableDamping = true;
+					threeControls.dampingFactor = 0.05;
+				}
+				const handleResize = () => {
+					if (!threeRenderer || !threeCamera || !threeContainer.value) return;
+					const w = threeContainer.value.clientWidth || 1;
+					const h = threeContainer.value.clientHeight || 1;
+					threeRenderer.setSize(w, h);
+					threeCamera.aspect = w / h;
+					threeCamera.updateProjectionMatrix();
+				};
+				if (typeof ResizeObserver !== 'undefined') {
+					const observer = new ResizeObserver(handleResize);
+					observer.observe(threeContainer.value);
+					threeResizeCleanup = () => observer.disconnect();
+				} else {
+					window.addEventListener('resize', handleResize);
+					threeResizeCleanup = () => window.removeEventListener('resize', handleResize);
+				}
+				const animate = () => {
+					if (!threeRenderer) return;
+					threeFrameId = requestAnimationFrame(animate);
+					if (threeControls && threeControls.update) {
+						threeControls.update();
+					}
+					threeRenderer.render(threeScene, threeCamera);
+				};
+				animate();
+				return true;
+			}
+			function disposeThreeScene() {
+				if (threeFrameId) {
+					cancelAnimationFrame(threeFrameId);
+					threeFrameId = null;
+				}
+				if (threeControls && typeof threeControls.dispose === 'function') {
+					threeControls.dispose();
+				}
+				threeControls = null;
+				if (threeResizeCleanup) {
+					threeResizeCleanup();
+					threeResizeCleanup = null;
+				}
+				if (threeCurrentObject) {
+					disposeThreeObject(threeCurrentObject);
+					threeCurrentObject = null;
+				}
+				if (threeAxesHelper && threeScene) {
+					threeScene.remove(threeAxesHelper);
+					threeAxesHelper = null;
+				}
+				if (threeRenderer) {
+					if (threeRenderer.domElement && threeRenderer.domElement.parentNode) {
+						threeRenderer.domElement.parentNode.removeChild(threeRenderer.domElement);
+					}
+					threeRenderer.dispose();
+					threeRenderer = null;
+				}
+				threeScene = null;
+				threeCamera = null;
+				if (threeContainer.value) {
+					threeContainer.value.innerHTML = '';
+				}
+			}
+			function setPointSize(newSize) {
+				const clamped = Math.min(maxPointSize, Math.max(minPointSize, Number(newSize) || minPointSize));
+				pointSize.value = clamped;
+				applyPointSize();
+			}
+
+			function onKeyDown(e) {
+				const target = e.target;
+				const tag = (target && target.tagName) ? target.tagName.toUpperCase() : '';
+				const isEditableTarget =
+					(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') ||
+					(target && target.isContentEditable) ||
+					(target && typeof target.closest === 'function' && target.closest('input, textarea, select, [contenteditable="true"]'));
+				if (isEditableTarget) {
+					return;
+				}
+				if (visibleEntries.value.length === 0) return;
+				if (e.key === 'ArrowDown') {
+					e.preventDefault();
+					const next = Math.min(visibleEntries.value.length - 1, selectedIndex.value + 1);
+					setSelected(next);
+				} else if (e.key === 'ArrowUp') {
+					e.preventDefault();
+					const prev = Math.max(0, selectedIndex.value - 1);
+					setSelected(prev);
+				} else if (e.key === 'Enter') {
+					e.preventDefault();
+					openSelected();
+				} else if (e.key === 'Backspace') {
+					e.preventDefault();
+					goUp();
+				} else if (e.key.toLowerCase() === 'i') {
+					e.preventDefault();
+					updatePreview();
+				}
+			}
+
+			function scrollSelectedIntoView() {
+				// Ensure selected row stays in view
+				if (typeof window === 'undefined' || !listBody.value) return;
+				const raf = window.requestAnimationFrame || (cb => setTimeout(cb, 0));
+				raf(() => {
+					const rows = listBody.value.querySelectorAll('button.list-group-item');
+					if (selectedIndex.value < 0 || selectedIndex.value >= rows.length) return;
+					rows[selectedIndex.value].scrollIntoView({ block: 'nearest' });
+				});
+			}
+
+			function syncSelectionToFilter() {
+				if (visibleEntries.value.length === 0) {
+					selectedIndex.value = -1;
+					resetPreviewToNone();
+				} else {
+					if (selectedIndex.value < 0 || selectedIndex.value >= visibleEntries.value.length) {
+						selectedIndex.value = 0;
+					}
+					updatePreview();
+					scrollSelectedIntoView();
+				}
+			}
+
+			// Keep selection valid when filtering
+			watch(searchTerm, syncSelectionToFilter);
+			watch(visibleEntries, syncSelectionToFilter);
+
+			function clampZoom(value) {
+				return Math.min(maxZoom, Math.max(minZoom, value));
+			}
+
+			function zoomIn(step = zoomStep) {
+				zoomScale.value = clampZoom(parseFloat((zoomScale.value + step).toFixed(2)));
+			}
+
+			function zoomOut(step = zoomStep) {
+				zoomScale.value = clampZoom(parseFloat((zoomScale.value - step).toFixed(2)));
+			}
+
+			function resetZoom() {
+				zoomScale.value = 1;
+			}
+
+			function onPreviewWheel(event) {
+				event.preventDefault();
+				event.stopPropagation();
+				const delta = event.deltaY || 0;
+				if (delta < 0) {
+					zoomIn(zoomStep / 2);
+				} else if (delta > 0) {
+					zoomOut(zoomStep / 2);
+				}
+			}
+			// Splitter drag handlers
+			function startDrag(e) {
+				e.preventDefault();
+				isDragging.value = true;
+				window.addEventListener('mousemove', onDrag);
+				window.addEventListener('mouseup', stopDrag, { once: true });
+			}
+			function onDrag(e) {
+				if (!isDragging.value) return;
+				const container = document.querySelector('.viewer-panels');
+				if (!container) return;
+				const rect = container.getBoundingClientRect();
+				const minW = 260;
+				const maxW = Math.max(minW, rect.width - 320);
+				let w = e.clientX - rect.left;
+				w = Math.max(minW, Math.min(maxW, w));
+				leftPanelWidthPx.value = Math.round(w);
+			}
+			function stopDrag() {
+				isDragging.value = false;
+				window.removeEventListener('mousemove', onDrag);
+			}
+
+			onMounted(async () => {
+				await fetchConfig();
+				await loadList('');
+				// Focus container to receive keyboard events
+				const focusEl = document.querySelector('[data-fileviewer-focus]');
+				if (focusEl) focusEl.focus();
+			});
+
+			return {
+				allowedRoots,
+				selectedRoot,
+				rootPathInput,
+				leftPanelWidthPx,
+				searchTerm,
+				visibleEntries,
+				currentPath,
+				parentPath,
+				entries,
+				isLoadingList,
+				selectedIndex,
+				previewImageUrl,
+				previewMode,
+				previewLoading,
+				previewError,
+				previewText,
+				previewTextLanguage,
+				previewTextTruncated,
+				maxTextPreviewBytes,
+				previewPlaceholderText,
+				previewHeaderText,
+				textCodeBlock,
+				threeContainer,
+				listBody,
+				onRootChange,
+				applyRootInput,
+				openBrowse,
+				goToPath,
+				goUp,
+				humanSize,
+				setSelected,
+				onRowClick,
+				openSelected,
+				onKeyDown,
+				startDrag,
+				zoomScale,
+				minZoom,
+				maxZoom,
+				zoomPercent,
+				zoomIn,
+				zoomOut,
+				resetZoom,
+				onPreviewWheel,
+				imageStyle,
+				previewImageDimensionsText,
+				onPreviewImageLoad,
+				onPreviewImageError,
+				pointSize,
+				minPointSize,
+				maxPointSize,
+				setPointSize,
+				showModifiedTimes,
+				formatMtime,
+				// browse modal bindings
+				browsePath,
+				browseEntries,
+				browseParent,
+				browseSelectedIndex,
+				openBrowseDir,
+				confirmBrowse,
+				loadBrowse,
+				// statistics
+				getTotalItems,
+				getNumFolders,
+				getNumFiles,
+				selectedEntry,
+				copySelectedPath,
+				copyCurrentPath,
+				copyEntryPath,
+				isPathCopied,
+				refreshList
+			};
+		}
+	});
+	// Avoid Jinja2 braces conflict by using [[ ]] for Vue
+	app.config.compilerOptions.delimiters = ['[[', ']]'];
+	app.mount('#app');
+	</script>
+	<!-- Bootstrap JS (optional) -->
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+
+
+

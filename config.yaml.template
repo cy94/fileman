@@ -1,0 +1,4 @@
+allowed_roots:
+  - dir1
+  - dir2
+
