@@ -1,9 +1,10 @@
 fileman
 =========================
-Simple web file browser to view images, text files, 3D point clouds and meshes and videos:
+Simple web file browser to view images, text files, 3D point clouds, meshes and videos. Built with Cursor.
 
 ![screenshot](img/screenshot2.png)
 
+Features:
 - Configurable allowed roots via YAML
 - Directory listing with sizes
 - Image preview next to the list
