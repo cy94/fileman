@@ -482,7 +482,15 @@
 					if (previewMode.value !== 'text') return;
 					if (textCodeBlock.value) {
 						try {
-							window.hljs.highlightElement(textCodeBlock.value);
+							const el = textCodeBlock.value;
+							// Allow re-highlighting by clearing previous state/classes
+							if (el.removeAttribute) {
+								el.removeAttribute('data-highlighted');
+							}
+							if (el.classList) {
+								el.classList.remove('hljs');
+							}
+							window.hljs.highlightElement(el);
 						} catch (err) {
 							// ignore highlight errors
 						}
