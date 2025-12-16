@@ -253,33 +253,43 @@
 							[[ previewImageDimensionsText ]]
 						</span>
 					</div>
-					<div class="btn-group btn-group-sm" role="group" v-if="previewMode === 'image'">
-						<button type="button" class="btn btn-outline-secondary" @click="zoomOut" :disabled="zoomScale <= minZoom + 0.001">-</button>
-						<button type="button" class="btn btn-outline-secondary" @click="resetZoom">[[ zoomPercent ]]%</button>
-						<button type="button" class="btn btn-outline-secondary" @click="zoomIn" :disabled="zoomScale >= maxZoom - 0.001">+</button>
-					</div>
-					<div v-else-if="previewMode === 'video'" class="text-muted small">
-						Video preview
-					</div>
-					<div v-else-if="previewMode === 'ply'" class="d-flex align-items-center gap-3 flex-wrap">
-						<div class="text-muted small">3D preview</div>
-						<div class="d-flex align-items-center gap-2">
-							<label class="form-label mb-0 small text-muted">Point size</label>
-							<input
-								type="range"
-								class="form-range mb-0"
-								style="width: 160px;"
-								:min="minPointSize"
-								:max="maxPointSize"
-								:step="0.001"
-								:value="pointSize"
-								@input="e => setPointSize(e.target.value)"
-							/>
-							<span class="small text-muted" style="min-width: 3.5rem;">[[ pointSize.toFixed(3) ]]</span>
+					<div class="d-flex align-items-center gap-2 flex-wrap ms-auto">
+						<div class="btn-group btn-group-sm" role="group" v-if="previewMode === 'image'">
+							<button type="button" class="btn btn-outline-secondary" @click="zoomOut" :disabled="zoomScale <= minZoom + 0.001">-</button>
+							<button type="button" class="btn btn-outline-secondary" @click="resetZoom">[[ zoomPercent ]]%</button>
+							<button type="button" class="btn btn-outline-secondary" @click="zoomIn" :disabled="zoomScale >= maxZoom - 0.001">+</button>
 						</div>
-					</div>
-					<div v-else class="text-muted small">
-						[[ previewHeaderText ]]
+						<div v-else-if="previewMode === 'video'" class="text-muted small">
+							Video preview
+						</div>
+						<div v-else-if="previewMode === 'ply'" class="d-flex align-items-center gap-3 flex-wrap">
+							<div class="text-muted small">3D preview</div>
+							<div class="d-flex align-items-center gap-2">
+								<label class="form-label mb-0 small text-muted">Point size</label>
+								<input
+									type="range"
+									class="form-range mb-0"
+									style="width: 160px;"
+									:min="minPointSize"
+									:max="maxPointSize"
+									:step="0.001"
+									:value="pointSize"
+									@input="e => setPointSize(e.target.value)"
+								/>
+								<span class="small text-muted" style="min-width: 3.5rem;">[[ pointSize.toFixed(3) ]]</span>
+							</div>
+						</div>
+						<div v-else class="text-muted small">
+							[[ previewHeaderText ]]
+						</div>
+						<button
+							v-if="associatedScriptUrl"
+							type="button"
+							class="btn btn-outline-secondary btn-sm"
+							@click="openAssociatedScript"
+						>
+							View job script
+						</button>
 					</div>
 				</div>
 				<div class="card-body bg-white p-0 preview-body">
@@ -544,6 +554,48 @@
 			let threeResizeCleanup = null;
 			let threeCurrentObject = null;
 			let threeAxesHelper = null;
+			const associatedScriptPath = computed(() => {
+				const entry = selectedEntry.value;
+				if (!entry || !entry.name || entry.is_dir) return '';
+				const name = entry.name;
+				const dir = currentPath.value || '';
+				// Heuristic: lookalike SPP training logs on this cluster
+				if (
+					name.startsWith('train_lookalike_spp_') &&
+					name.endsWith('.log') &&
+					dir.startsWith('/rhome/cyeshwanth/output')
+				) {
+					return '/rhome/cyeshwanth/lookalike/lookalike/classification/scripts/train_full_spp.sh';
+				}
+				return '';
+			});
+			function buildAbsoluteFileUrlForPath(absPath) {
+				if (!absPath) return '';
+				const roots = allowedRoots.value || [];
+				let chosenRoot = roots.find(r => {
+					if (!r) return false;
+					const rootNorm = r.endsWith('/') ? r : r + '/';
+					return absPath === r || absPath.startsWith(rootNorm);
+				}) || (roots.length ? roots[0] : '');
+				const params = new URLSearchParams();
+				if (chosenRoot) {
+					params.set('root', chosenRoot);
+				}
+				params.set('path', absPath);
+				return '/api/file?' + params.toString();
+			}
+			const associatedScriptUrl = computed(() => {
+				const p = associatedScriptPath.value;
+				return p ? buildAbsoluteFileUrlForPath(p) : '';
+			});
+			function openAssociatedScript() {
+				const url = associatedScriptUrl.value;
+				if (!url) {
+					alert('No associated script found for this file.');
+					return;
+				}
+				window.open(url, '_blank');
+			}
 
 			function fetchConfig() {
 				return fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -1407,7 +1459,9 @@
 				copyCurrentPath,
 				copyEntryPath,
 				isPathCopied,
-				refreshList
+				refreshList,
+				associatedScriptUrl,
+				openAssociatedScript
 			};
 		}
 	});
