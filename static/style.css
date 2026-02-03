@@ -74,6 +74,7 @@
 	transition: transform 0.15s ease-out;
 	user-select: none;
 	-webkit-user-drag: none;
+	pointer-events: auto;
 }
 .preview-video {
 	flex: 1;

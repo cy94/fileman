@@ -171,6 +171,14 @@ def create_app() -> Flask:
 		mime, _ = mimetypes.guess_type(str(path))
 		return send_file(path, mimetype=mime or "application/octet-stream", as_attachment=False, conditional=True)
 
+	@app.get("/api/download")
+	def api_download():
+		path = resolve_requested_file()
+		if not path.exists() or not path.is_file():
+			abort(404, description="File not found")
+		mime, _ = mimetypes.guess_type(str(path))
+		return send_file(path, mimetype=mime or "application/octet-stream", as_attachment=True, download_name=path.name)
+
 	@app.get("/api/text_preview")
 	def api_text_preview():
 		path = resolve_requested_file()
@@ -199,6 +207,6 @@ if __name__ == "__main__":
 	app = create_app()
 	# Bind to 0.0.0.0 for remote access; use PORT env or default 5000
 	port = int(os.environ.get("PORT", "5000"))
-	app.run(host="0.0.0.0", port=port, debug=False)
+	app.run(host="0.0.0.0", port=port, debug=True)
 
 

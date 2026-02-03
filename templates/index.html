@@ -283,6 +283,19 @@
 							[[ previewHeaderText ]]
 						</div>
 						<button
+							v-if="selectedEntry && !selectedEntry.is_dir"
+							type="button"
+							class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
+							@click="downloadFile"
+							:title="'Download ' + (selectedEntry ? selectedEntry.name : 'file')"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+								<path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>
+							</svg>
+							<span>Download</span>
+						</button>
+						<button
 							v-if="associatedScriptUrl"
 							type="button"
 							class="btn btn-outline-secondary btn-sm"
@@ -293,7 +306,7 @@
 					</div>
 				</div>
 				<div class="card-body bg-white p-0 preview-body">
-					<div v-if="previewMode === 'image'" class="preview-canvas" @wheel.prevent="onPreviewWheel">
+					<div v-if="previewMode === 'image'" class="preview-canvas" @wheel.prevent="onPreviewWheel" @mousedown="startPan" :style="canvasStyle">
 						<img
 							:src="previewImageUrl"
 							alt="Preview"
@@ -531,8 +544,18 @@
 			const maxZoom = 4;
 			const zoomStep = 0.2;
 			const zoomPercent = computed(() => Math.round(zoomScale.value * 100));
+			const panX = ref(0);
+			const panY = ref(0);
+			const isPanning = ref(false);
+			const panStartX = ref(0);
+			const panStartY = ref(0);
+			const panStartPanX = ref(0);
+			const panStartPanY = ref(0);
+			const canvasStyle = computed(() => ({
+				cursor: zoomScale.value > 1 ? (isPanning.value ? 'grabbing' : 'grab') : 'default'
+			}));
 			const imageStyle = computed(() => ({
-				transform: `scale(${zoomScale.value})`,
+				transform: `translate(${panX.value}px, ${panY.value}px) scale(${zoomScale.value})`,
 				transformOrigin: 'center center'
 			}));
 			const pointSize = ref(0.01);
@@ -789,6 +812,33 @@
 				return '/api/file?' + params.toString();
 			}
 
+			function buildDownloadUrl(path) {
+				const params = new URLSearchParams();
+				params.set('root', selectedRoot.value || '');
+				params.set('path', path);
+				return '/api/download?' + params.toString();
+			}
+
+			function downloadFile() {
+				if (!selectedEntry.value) {
+					alert('Select a file first.');
+					return;
+				}
+				if (selectedEntry.value.is_dir) {
+					alert('Cannot download a directory.');
+					return;
+				}
+				const fullPath = getEntryFullPath(selectedEntry.value);
+				const url = buildDownloadUrl(fullPath);
+				// Create a temporary anchor element to trigger download
+				const link = document.createElement('a');
+				link.href = url;
+				link.download = selectedEntry.value.name;
+				document.body.appendChild(link);
+				link.click();
+				document.body.removeChild(link);
+			}
+
 			function getEntryFullPath(entry) {
 				if (!entry) return '';
 				const base = currentPath.value || '';
@@ -901,6 +951,8 @@
 					previewVideoUrl.value = '';
 					if (fullPath !== lastPreviewPath) {
 						zoomScale.value = 1;
+						panX.value = 0;
+						panY.value = 0;
 						lastPreviewPath = fullPath;
 					}
 					previewLoading.value = false;
@@ -1349,6 +1401,8 @@
 
 			function resetZoom() {
 				zoomScale.value = 1;
+				panX.value = 0;
+				panY.value = 0;
 			}
 
 			function onPreviewWheel(event) {
@@ -1360,6 +1414,33 @@
 				} else if (delta > 0) {
 					zoomOut(zoomStep / 2);
 				}
+			}
+
+			function startPan(event) {
+				if (zoomScale.value <= 1) return;
+				if (event.button !== 0) return; // Only left mouse button
+				event.preventDefault();
+				isPanning.value = true;
+				panStartX.value = event.clientX;
+				panStartY.value = event.clientY;
+				panStartPanX.value = panX.value;
+				panStartPanY.value = panY.value;
+				window.addEventListener('mousemove', onPanMove);
+				window.addEventListener('mouseup', stopPan, { once: true });
+			}
+
+			function onPanMove(event) {
+				if (!isPanning.value) return;
+				event.preventDefault();
+				const deltaX = event.clientX - panStartX.value;
+				const deltaY = event.clientY - panStartY.value;
+				panX.value = panStartPanX.value + deltaX;
+				panY.value = panStartPanY.value + deltaY;
+			}
+
+			function stopPan() {
+				isPanning.value = false;
+				window.removeEventListener('mousemove', onPanMove);
 			}
 			// Splitter drag handlers
 			function startDrag(e) {
@@ -1436,6 +1517,8 @@
 				zoomOut,
 				resetZoom,
 				onPreviewWheel,
+				startPan,
+				canvasStyle,
 				imageStyle,
 				previewImageDimensionsText,
 				onPreviewImageLoad,
@@ -1469,7 +1552,8 @@
 				isPathCopied,
 				refreshList,
 				associatedScriptUrl,
-				openAssociatedScript
+				openAssociatedScript,
+				downloadFile
 			};
 		}
 	});
