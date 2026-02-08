@@ -1202,15 +1202,7 @@
 			let zoomTarget = null;
 			
 			function handlePlyWheel(event) {
-				if (previewMode.value !== 'ply' || !threeCamera || !threeControls || !zoomTarget) {
-					console.log('[PLY Zoom] Handler skipped:', {
-						previewMode: previewMode.value,
-						hasCamera: !!threeCamera,
-						hasControls: !!threeControls,
-						hasTarget: !!zoomTarget
-					});
-					return;
-				}
+				if (previewMode.value !== 'ply' || !threeCamera || !threeControls || !zoomTarget) return;
 				event.preventDefault();
 				event.stopPropagation();
 				
@@ -1227,7 +1219,6 @@
 				// Calculate direction from target to camera
 				const direction = threeCamera.position.clone().sub(zoomTarget);
 				if (direction.length() === 0) {
-					console.warn('[PLY Zoom] Zero direction vector, using default');
 					direction.set(1, 1, 1).normalize();
 				} else {
 					direction.normalize();
@@ -1248,26 +1239,13 @@
 				if (clampedDist < threeCamera.near * 2) {
 					threeCamera.near = Math.max(0.0001, clampedDist * 0.1);
 					threeCamera.updateProjectionMatrix();
-					console.warn('[PLY Zoom] Adjusted near plane:', threeCamera.near);
 				}
 				if (clampedDist > threeCamera.far * 0.8) {
 					threeCamera.far = clampedDist * 2;
 					threeCamera.updateProjectionMatrix();
-					console.warn('[PLY Zoom] Adjusted far plane:', threeCamera.far);
 				}
 				
 				currentZoomDistance = clampedDist;
-				
-				// Debug log
-				console.log('[PLY Zoom] Zoomed:', {
-					delta,
-					zoomFactor,
-					oldDist: currentDist,
-					newDist: clampedDist,
-					near: threeCamera.near,
-					far: threeCamera.far,
-					withinBounds: clampedDist >= threeCamera.near && clampedDist <= threeCamera.far
-				});
 			}
 			
 			function frameThreeObject(object) {
@@ -1305,18 +1283,7 @@
 					if (threeRenderer && threeRenderer.domElement) {
 						threeRenderer.domElement.removeEventListener('wheel', handlePlyWheel);
 						threeRenderer.domElement.addEventListener('wheel', handlePlyWheel, { passive: false });
-						console.log('[PLY Viewer] Custom zoom handler attached to canvas');
-					} else {
-						console.error('[PLY Viewer] Cannot attach zoom handler - renderer or DOM element missing');
 					}
-					
-					console.log('[PLY Viewer] Camera and controls configured:', {
-						near: threeCamera.near,
-						far: threeCamera.far,
-						minDistance: zoomMinDistance,
-						maxDistance: zoomMaxDistance,
-						objectSize: maxDim
-					});
 				}
 			}
 			function addAxesHelper(object) {
@@ -1350,15 +1317,6 @@
 				}
 				const width = threeContainer.value.clientWidth || threeContainer.value.offsetWidth || 400;
 				const height = threeContainer.value.clientHeight || threeContainer.value.offsetHeight || 300;
-				// Try WebGL2 first, fallback to WebGL
-				let rendererContext = null;
-				try {
-					const canvas = document.createElement('canvas');
-					rendererContext = canvas.getContext('webgl2') || canvas.getContext('webgl');
-				} catch (e) {
-					console.warn('[PLY Viewer] WebGL context check failed:', e);
-				}
-				
 				threeRenderer = new THREE.WebGLRenderer({ 
 					antialias: true,
 					powerPreference: "high-performance",
@@ -1367,13 +1325,6 @@
 				threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); // Cap pixel ratio
 				threeRenderer.setSize(width, height);
 				threeContainer.value.appendChild(threeRenderer.domElement);
-				
-				console.log('[PLY Viewer] Renderer initialized:', {
-					webglVersion: threeRenderer.getContext().getParameter(threeRenderer.getContext().VERSION),
-					vendor: threeRenderer.getContext().getParameter(threeRenderer.getContext().VENDOR),
-					renderer: threeRenderer.getContext().getParameter(threeRenderer.getContext().RENDERER),
-					pixelRatio: threeRenderer.getPixelRatio()
-				});
 				threeScene = new THREE.Scene();
 				threeScene.background = new THREE.Color(0xf8f9fa);
 				// Set very generous near/far planes initially - will be refined when object is loaded
@@ -1396,7 +1347,6 @@
 					// These will be updated when the object is loaded
 					threeControls.minDistance = 0.001;
 					threeControls.maxDistance = 100000;
-					console.log('[PLY Viewer] OrbitControls initialized (custom zoom handler)');
 				}
 				const handleResize = () => {
 					if (!threeRenderer || !threeCamera || !threeContainer.value) return;
@@ -1424,12 +1374,10 @@
 					if (threeCurrentObject && threeScene) {
 						const isInScene = threeScene.children.includes(threeCurrentObject);
 						if (!isInScene) {
-							console.warn('[PLY Viewer] Object disappeared from scene! Re-adding...');
 							threeScene.add(threeCurrentObject);
 						}
 						// Check if object is actually visible (not culled)
 						if (threeCurrentObject.visible === false) {
-							console.warn('[PLY Viewer] Object is hidden! Making visible...');
 							threeCurrentObject.visible = true;
 						}
 					}
@@ -1447,21 +1395,6 @@
 							}
 							threeCamera.updateProjectionMatrix();
 						}
-						// Debug: Log if camera goes out of bounds
-						if (distance < threeCamera.near * 1.1 || distance > threeCamera.far * 0.9) {
-							console.warn('[PLY Viewer] Camera near bounds:', {
-								distance,
-								near: threeCamera.near,
-								far: threeCamera.far,
-								ratio: distance / threeCamera.far
-							});
-						}
-					}
-					// Check for WebGL errors
-					const gl = threeRenderer.getContext();
-					const error = gl.getError();
-					if (error !== gl.NO_ERROR) {
-						console.error('[PLY Viewer] WebGL error:', error);
 					}
 					threeRenderer.render(threeScene, threeCamera);
 				};
