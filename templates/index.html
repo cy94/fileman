@@ -47,7 +47,7 @@
 		})();
 	</script>
 	<!-- Custom minimal styles (via Flask static to avoid cache issues) -->
-	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1" />
+	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=2" />
 	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css?v=2" crossorigin="anonymous" referrerpolicy="no-referrer" />
 	<!-- Vue 3 via CDN -->
 	<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -1196,6 +1196,80 @@
 					material.dispose();
 				}
 			}
+			let currentZoomDistance = null;
+			let zoomMinDistance = null;
+			let zoomMaxDistance = null;
+			let zoomTarget = null;
+			
+			function handlePlyWheel(event) {
+				if (previewMode.value !== 'ply' || !threeCamera || !threeControls || !zoomTarget) {
+					console.log('[PLY Zoom] Handler skipped:', {
+						previewMode: previewMode.value,
+						hasCamera: !!threeCamera,
+						hasControls: !!threeControls,
+						hasTarget: !!zoomTarget
+					});
+					return;
+				}
+				event.preventDefault();
+				event.stopPropagation();
+				
+				const delta = event.deltaY || 0;
+				const zoomFactor = delta > 0 ? 1.1 : 0.9; // Zoom out or in
+				
+				// Get current distance from camera to target
+				const currentDist = threeCamera.position.distanceTo(zoomTarget);
+				const newDist = currentDist * zoomFactor;
+				
+				// Clamp to min/max distances
+				const clampedDist = Math.max(zoomMinDistance, Math.min(zoomMaxDistance, newDist));
+				
+				// Calculate direction from target to camera
+				const direction = threeCamera.position.clone().sub(zoomTarget);
+				if (direction.length() === 0) {
+					console.warn('[PLY Zoom] Zero direction vector, using default');
+					direction.set(1, 1, 1).normalize();
+				} else {
+					direction.normalize();
+				}
+				
+				// Set new camera position
+				threeCamera.position.copy(zoomTarget).add(direction.multiplyScalar(clampedDist));
+				
+				// Update OrbitControls to reflect new position
+				if (threeControls._spherical) {
+					threeControls._spherical.setFromVector3(
+						threeCamera.position.clone().sub(zoomTarget)
+					);
+					threeControls._clampRadius();
+				}
+				
+				// Ensure camera stays within bounds
+				if (clampedDist < threeCamera.near * 2) {
+					threeCamera.near = Math.max(0.0001, clampedDist * 0.1);
+					threeCamera.updateProjectionMatrix();
+					console.warn('[PLY Zoom] Adjusted near plane:', threeCamera.near);
+				}
+				if (clampedDist > threeCamera.far * 0.8) {
+					threeCamera.far = clampedDist * 2;
+					threeCamera.updateProjectionMatrix();
+					console.warn('[PLY Zoom] Adjusted far plane:', threeCamera.far);
+				}
+				
+				currentZoomDistance = clampedDist;
+				
+				// Debug log
+				console.log('[PLY Zoom] Zoomed:', {
+					delta,
+					zoomFactor,
+					oldDist: currentDist,
+					newDist: clampedDist,
+					near: threeCamera.near,
+					far: threeCamera.far,
+					withinBounds: clampedDist >= threeCamera.near && clampedDist <= threeCamera.far
+				});
+			}
+			
 			function frameThreeObject(object) {
 				if (!object || !threeCamera) return;
 				const box = new THREE.Box3().setFromObject(object);
@@ -1203,13 +1277,46 @@
 				const center = box.getCenter(new THREE.Vector3());
 				const maxDim = Math.max(size.x, size.y, size.z) || 1;
 				const distance = maxDim * 1.5;
-				threeCamera.position.set(center.x + distance, center.y + distance, center.z + distance);
-				threeCamera.near = Math.max(distance / 100, 0.01);
-				threeCamera.far = distance * 100;
-				threeCamera.updateProjectionMatrix();
+				
 				if (threeControls) {
+					// Set target first
 					threeControls.target.copy(center);
+					zoomTarget = center.clone();
+					
+					// Set zoom limits based on object size
+					zoomMinDistance = maxDim * 0.01;
+					zoomMaxDistance = maxDim * 1000;
+					threeControls.minDistance = zoomMinDistance;
+					threeControls.maxDistance = zoomMaxDistance;
+					
+					// Set camera near/far planes
+					threeCamera.near = 0.0001;
+					threeCamera.far = Math.max(zoomMaxDistance * 2, 100000);
+					
+					// Set camera position
+					threeCamera.position.set(center.x + distance, center.y + distance, center.z + distance);
+					currentZoomDistance = distance;
+					
+					// Initialize OrbitControls
 					threeControls.update();
+					threeCamera.updateProjectionMatrix();
+					
+					// Add custom wheel handler to the renderer's DOM element
+					if (threeRenderer && threeRenderer.domElement) {
+						threeRenderer.domElement.removeEventListener('wheel', handlePlyWheel);
+						threeRenderer.domElement.addEventListener('wheel', handlePlyWheel, { passive: false });
+						console.log('[PLY Viewer] Custom zoom handler attached to canvas');
+					} else {
+						console.error('[PLY Viewer] Cannot attach zoom handler - renderer or DOM element missing');
+					}
+					
+					console.log('[PLY Viewer] Camera and controls configured:', {
+						near: threeCamera.near,
+						far: threeCamera.far,
+						minDistance: zoomMinDistance,
+						maxDistance: zoomMaxDistance,
+						objectSize: maxDim
+					});
 				}
 			}
 			function addAxesHelper(object) {
@@ -1243,13 +1350,34 @@
 				}
 				const width = threeContainer.value.clientWidth || threeContainer.value.offsetWidth || 400;
 				const height = threeContainer.value.clientHeight || threeContainer.value.offsetHeight || 300;
-				threeRenderer = new THREE.WebGLRenderer({ antialias: true });
-				threeRenderer.setPixelRatio(window.devicePixelRatio || 1);
+				// Try WebGL2 first, fallback to WebGL
+				let rendererContext = null;
+				try {
+					const canvas = document.createElement('canvas');
+					rendererContext = canvas.getContext('webgl2') || canvas.getContext('webgl');
+				} catch (e) {
+					console.warn('[PLY Viewer] WebGL context check failed:', e);
+				}
+				
+				threeRenderer = new THREE.WebGLRenderer({ 
+					antialias: true,
+					powerPreference: "high-performance",
+					preserveDrawingBuffer: false
+				});
+				threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); // Cap pixel ratio
 				threeRenderer.setSize(width, height);
 				threeContainer.value.appendChild(threeRenderer.domElement);
+				
+				console.log('[PLY Viewer] Renderer initialized:', {
+					webglVersion: threeRenderer.getContext().getParameter(threeRenderer.getContext().VERSION),
+					vendor: threeRenderer.getContext().getParameter(threeRenderer.getContext().VENDOR),
+					renderer: threeRenderer.getContext().getParameter(threeRenderer.getContext().RENDERER),
+					pixelRatio: threeRenderer.getPixelRatio()
+				});
 				threeScene = new THREE.Scene();
 				threeScene.background = new THREE.Color(0xf8f9fa);
-				threeCamera = new THREE.PerspectiveCamera(60, width / height || 1, 0.01, 5000);
+				// Set very generous near/far planes initially - will be refined when object is loaded
+				threeCamera = new THREE.PerspectiveCamera(60, width / height || 1, 0.001, 100000);
 				threeCamera.position.set(0, 0, 2);
 				const ambient = new THREE.AmbientLight(0xffffff, 0.7);
 				threeScene.add(ambient);
@@ -1260,6 +1388,15 @@
 					threeControls = new THREE.OrbitControls(threeCamera, threeRenderer.domElement);
 					threeControls.enableDamping = true;
 					threeControls.dampingFactor = 0.05;
+					// DISABLE OrbitControls zoom - we'll handle it ourselves
+					threeControls.enableZoom = false;
+					threeControls.enablePan = true;
+					threeControls.enableRotate = true;
+					// Set zoom limits to prevent going too far in/out
+					// These will be updated when the object is loaded
+					threeControls.minDistance = 0.001;
+					threeControls.maxDistance = 100000;
+					console.log('[PLY Viewer] OrbitControls initialized (custom zoom handler)');
 				}
 				const handleResize = () => {
 					if (!threeRenderer || !threeCamera || !threeContainer.value) return;
@@ -1278,10 +1415,53 @@
 					threeResizeCleanup = () => window.removeEventListener('resize', handleResize);
 				}
 				const animate = () => {
-					if (!threeRenderer) return;
+					if (!threeRenderer || !threeScene || !threeCamera) return;
 					threeFrameId = requestAnimationFrame(animate);
 					if (threeControls && threeControls.update) {
 						threeControls.update();
+					}
+					// Ensure object stays in scene
+					if (threeCurrentObject && threeScene) {
+						const isInScene = threeScene.children.includes(threeCurrentObject);
+						if (!isInScene) {
+							console.warn('[PLY Viewer] Object disappeared from scene! Re-adding...');
+							threeScene.add(threeCurrentObject);
+						}
+						// Check if object is actually visible (not culled)
+						if (threeCurrentObject.visible === false) {
+							console.warn('[PLY Viewer] Object is hidden! Making visible...');
+							threeCurrentObject.visible = true;
+						}
+					}
+					// Ensure camera stays within valid bounds
+					if (threeCamera && threeControls && threeControls.target) {
+						const distance = threeCamera.position.distanceTo(threeControls.target);
+						// Only adjust if we're way out of bounds - be less aggressive
+						if (distance < threeCamera.near || distance > threeCamera.far) {
+							// Adjust near/far planes to accommodate current distance
+							if (distance < threeCamera.near) {
+								threeCamera.near = Math.max(0.0001, distance * 0.1);
+							}
+							if (distance > threeCamera.far) {
+								threeCamera.far = distance * 2;
+							}
+							threeCamera.updateProjectionMatrix();
+						}
+						// Debug: Log if camera goes out of bounds
+						if (distance < threeCamera.near * 1.1 || distance > threeCamera.far * 0.9) {
+							console.warn('[PLY Viewer] Camera near bounds:', {
+								distance,
+								near: threeCamera.near,
+								far: threeCamera.far,
+								ratio: distance / threeCamera.far
+							});
+						}
+					}
+					// Check for WebGL errors
+					const gl = threeRenderer.getContext();
+					const error = gl.getError();
+					if (error !== gl.NO_ERROR) {
+						console.error('[PLY Viewer] WebGL error:', error);
 					}
 					threeRenderer.render(threeScene, threeCamera);
 				};
@@ -1293,10 +1473,18 @@
 					cancelAnimationFrame(threeFrameId);
 					threeFrameId = null;
 				}
+				// Remove custom wheel handler
+				if (threeRenderer && threeRenderer.domElement) {
+					threeRenderer.domElement.removeEventListener('wheel', handlePlyWheel);
+				}
 				if (threeControls && typeof threeControls.dispose === 'function') {
 					threeControls.dispose();
 				}
 				threeControls = null;
+				currentZoomDistance = null;
+				zoomMinDistance = null;
+				zoomMaxDistance = null;
+				zoomTarget = null;
 				if (threeResizeCleanup) {
 					threeResizeCleanup();
 					threeResizeCleanup = null;
