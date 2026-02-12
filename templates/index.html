@@ -71,16 +71,16 @@
 	<script type="module">
 		// Load Three.js and helpers via ES modules to avoid deprecated globals
 		import * as THREE from 'three';
-		import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+		import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 		import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 
 		// Expose on window for the existing viewer code.
 		// Clone to avoid mutating the module namespace (which is non-extensible).
 		window.THREE = Object.assign({}, THREE, {
-			OrbitControls,
+			TrackballControls,
 			PLYLoader
 		});
-		console.log('✓ Three.js ES modules loaded (three + OrbitControls + PLYLoader)');
+		console.log('✓ Three.js ES modules loaded (three + TrackballControls + PLYLoader)');
 	</script>
 </head>
 <body class="bg-body">
@@ -1227,12 +1227,11 @@
 				// Set new camera position
 				threeCamera.position.copy(zoomTarget).add(direction.multiplyScalar(clampedDist));
 				
-				// Update OrbitControls to reflect new position
-				if (threeControls._spherical) {
-					threeControls._spherical.setFromVector3(
-						threeCamera.position.clone().sub(zoomTarget)
-					);
-					threeControls._clampRadius();
+				if (threeControls.target) {
+					threeControls.target.copy(zoomTarget);
+				}
+				if (typeof threeControls.update === 'function') {
+					threeControls.update();
 				}
 				
 				// Ensure camera stays within bounds
@@ -1275,7 +1274,7 @@
 					threeCamera.position.set(center.x + distance, center.y + distance, center.z + distance);
 					currentZoomDistance = distance;
 					
-					// Initialize OrbitControls
+					// Initialize controls state after reframing camera/target
 					threeControls.update();
 					threeCamera.updateProjectionMatrix();
 					
@@ -1335,16 +1334,17 @@
 				const directional = new THREE.DirectionalLight(0xffffff, 0.8);
 				directional.position.set(5, 5, 5);
 				threeScene.add(directional);
-				if (THREE.OrbitControls) {
-					threeControls = new THREE.OrbitControls(threeCamera, threeRenderer.domElement);
-					threeControls.enableDamping = true;
-					threeControls.dampingFactor = 0.05;
-					// DISABLE OrbitControls zoom - we'll handle it ourselves
-					threeControls.enableZoom = false;
-					threeControls.enablePan = true;
-					threeControls.enableRotate = true;
-					// Set zoom limits to prevent going too far in/out
-					// These will be updated when the object is loaded
+				if (THREE.TrackballControls) {
+					threeControls = new THREE.TrackballControls(threeCamera, threeRenderer.domElement);
+					// Disable built-in wheel zoom because we handle wheel zoom ourselves.
+					threeControls.noZoom = true;
+					threeControls.noPan = false;
+					threeControls.noRotate = false;
+					threeControls.staticMoving = true;
+					threeControls.rotateSpeed = 3.0;
+					threeControls.panSpeed = 1.0;
+					threeControls.dynamicDampingFactor = 0.1;
+					// Keep distance constraints; updated when object is loaded.
 					threeControls.minDistance = 0.001;
 					threeControls.maxDistance = 100000;
 				}
@@ -1355,6 +1355,9 @@
 					threeRenderer.setSize(w, h);
 					threeCamera.aspect = w / h;
 					threeCamera.updateProjectionMatrix();
+					if (threeControls && typeof threeControls.handleResize === 'function') {
+						threeControls.handleResize();
+					}
 				};
 				if (typeof ResizeObserver !== 'undefined') {
 					const observer = new ResizeObserver(handleResize);
