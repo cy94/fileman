@@ -249,6 +249,9 @@
 				<div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
 					<div class="d-flex flex-column">
 						<span>Preview</span>
+						<span v-if="showPreviewMtime && selectedEntry && !selectedEntry.is_dir" class="text-muted small">
+							Modified: [[ formatMtime(selectedEntry) || '—' ]]
+						</span>
 						<span v-if="previewMode === 'image' && previewImageDimensionsText" class="text-muted small">
 							[[ previewImageDimensionsText ]]
 						</span>
@@ -562,6 +565,7 @@
 			const minPointSize = 0.001;
 			const maxPointSize = 0.1;
 			const showModifiedTimes = ref(false);
+			const showPreviewMtime = ref(false);
 			const previewImageDimensionsText = computed(() => {
 				const dims = previewImageDims.value || {};
 				if (!dims.width || !dims.height) return '';
@@ -1656,6 +1660,7 @@
 				maxPointSize,
 				setPointSize,
 				showModifiedTimes,
+				showPreviewMtime,
 				formatMtime,
 				// browse modal bindings
 				browsePath,
