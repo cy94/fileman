@@ -171,8 +171,12 @@
 					</span>
 					<div class="d-flex gap-3 flex-wrap justify-content-end align-items-center">
 						<div class="form-check form-switch m-0">
+							<input class="form-check-input" type="checkbox" id="toggleThumbnails" v-model="showThumbnails">
+							<label class="form-check-label small text-muted" for="toggleThumbnails">Thumbnails</label>
+						</div>
+						<div class="form-check form-switch m-0">
 							<input class="form-check-input" type="checkbox" id="toggleMtime" v-model="showModifiedTimes">
-							<label class="form-check-label small text-muted" for="toggleMtime">Show modified time</label>
+							<label class="form-check-label small text-muted" for="toggleMtime">Modified time</label>
 						</div>
 						<button
 							type="button"
@@ -216,6 +220,14 @@
 								<span class="badge" :class="e.is_dir ? 'text-bg-success' : (e.is_image ? 'text-bg-warning' : (e.is_video ? 'text-bg-info' : 'text-bg-secondary'))">
 									[[ e.is_dir ? 'DIR' : (e.is_image ? 'IMG' : (e.is_video ? 'VID' : 'FILE')) ]]
 								</span>
+								<img 
+									v-if="showThumbnails && e.is_image && !e.is_dir" 
+									:src="buildThumbnailUrl(e)"
+									:alt="e.name"
+									class="file-thumbnail"
+									@error="handleThumbnailError"
+									loading="lazy"
+								/>
 								<span class="text-break text-truncate filename-selectable">[[ e.name ]]</span>
 								<span v-if="showModifiedTimes" class="small text-truncate text-muted" :class="{'text-white': idx === selectedIndex}">
 									[[ formatMtime(e) || '—' ]]
@@ -567,6 +579,7 @@
 			const minPointSize = 0.001;
 			const maxPointSize = 0.1;
 			const showModifiedTimes = ref(false);
+			const showThumbnails = ref(false);
 			const showPreviewMtime = ref(false);
 			const previewImageDimensionsText = computed(() => {
 				const dims = previewImageDims.value || {};
@@ -844,6 +857,22 @@
 				params.set('root', selectedRoot.value || '');
 				params.set('path', path);
 				return '/api/file?' + params.toString();
+			}
+
+			function buildThumbnailUrl(entry) {
+				const fullPath = getEntryFullPath(entry);
+				const params = new URLSearchParams();
+				params.set('root', selectedRoot.value || '');
+				params.set('path', fullPath);
+				params.set('size', '32'); // 32px thumbnails
+				return '/api/thumbnail?' + params.toString();
+			}
+
+			function handleThumbnailError(event) {
+				// Hide broken thumbnail images
+				if (event.target) {
+					event.target.style.display = 'none';
+				}
 			}
 
 			function buildDownloadUrl(path) {
@@ -1748,8 +1777,11 @@
 				maxPointSize,
 				setPointSize,
 				showModifiedTimes,
+				showThumbnails,
 				showPreviewMtime,
 				formatMtime,
+				buildThumbnailUrl,
+				handleThumbnailError,
 				// browse modal bindings
 				browsePath,
 				browseEntries,

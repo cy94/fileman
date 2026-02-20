@@ -2,8 +2,10 @@ import os
 import mimetypes
 import yaml
 from pathlib import Path
-from flask import Flask, jsonify, request, send_file, abort, render_template
+from flask import Flask, jsonify, request, send_file, abort, render_template, Response
 from urllib.request import urlopen
+from PIL import Image
+import io
 
 
 def load_config() -> dict:
@@ -199,6 +201,49 @@ def create_app() -> Flask:
 			"truncated": truncated,
 			"max_bytes": MAX_TEXT_PREVIEW_BYTES
 		})
+
+	@app.get("/api/thumbnail")
+	def api_thumbnail():
+		path = resolve_requested_file()
+		if not path.exists() or not path.is_file():
+			abort(404, description="File not found")
+		
+		mime, _ = mimetypes.guess_type(str(path))
+		if not mime or not mime.startswith("image/"):
+			abort(400, description="File is not an image")
+		
+		try:
+			# Get size parameter (default 48px)
+			size = int(request.args.get("size", "48"))
+			size = max(16, min(128, size))  # Clamp between 16 and 128
+			
+			# Open and resize image
+			with Image.open(path) as img:
+				# Convert to RGB if necessary (handles RGBA, P mode, etc.)
+				if img.mode in ('RGBA', 'LA', 'P'):
+					# Create white background for transparency
+					background = Image.new('RGB', img.size, (255, 255, 255))
+					if img.mode == 'P':
+						img = img.convert('RGBA')
+					if img.mode in ('RGBA', 'LA'):
+						background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+						img = background
+					else:
+						img = img.convert('RGB')
+				elif img.mode != 'RGB':
+					img = img.convert('RGB')
+				
+				# Calculate thumbnail size maintaining aspect ratio
+				img.thumbnail((size, size), Image.Resampling.LANCZOS)
+				
+				# Save to bytes
+				output = io.BytesIO()
+				img.save(output, format='JPEG', quality=85, optimize=True)
+				output.seek(0)
+				
+				return Response(output.read(), mimetype='image/jpeg')
+		except Exception as e:
+			abort(500, description=f"Unable to generate thumbnail: {str(e)}")
 
 	return app
 
