@@ -163,7 +163,7 @@
 						<div style="width: 120px;" class="text-end">Size</div>
 					</div>
 					<div class="mt-2">
-						<input type="text" class="form-control form-control-sm" placeholder="Search files and folders" v-model="searchTerm">
+						<input type="text" class="form-control form-control-sm" placeholder="Search files and folders (Press Escape to clear)" v-model="searchTerm" @keydown.escape.prevent="clearSearch">
 					</div>
 				<div class="mt-2 d-flex align-items-center justify-content-between gap-2 flex-wrap">
 					<span class="small text-muted">
@@ -514,6 +514,7 @@
 				});
 			}
 			const selectedIndex = ref(0);
+			const preSearchSelectedIndex = ref(0); // Track selected index before search starts
 			const previewImageUrl = ref('');
 			const previewVideoUrl = ref('');
 			const previewMode = ref('none');
@@ -1456,6 +1457,40 @@
 				applyPointSize();
 			}
 
+			function clearSearch() {
+				// Save current selected entry name if valid (file found during search)
+				const currentSelectedIdx = selectedIndex.value;
+				const selectedEntryName = (currentSelectedIdx >= 0 && currentSelectedIdx < visibleEntries.value.length)
+					? visibleEntries.value[currentSelectedIdx]?.name
+					: null;
+				
+				// Clear search
+				searchTerm.value = '';
+				
+				// Wait for Vue to update visibleEntries, then restore focus
+				nextTick(() => {
+					// Restore focus: use current selection if valid, otherwise use pre-search selection
+					if (selectedEntryName && entries.value.length > 0) {
+						// Find it in the full entries list
+						const fullIdx = entries.value.findIndex(e => e.name === selectedEntryName);
+						if (fullIdx >= 0) {
+							selectedIndex.value = fullIdx;
+							scrollSelectedIntoView();
+							return;
+						}
+					}
+					
+					// Fallback to pre-search selection
+					if (preSearchSelectedIndex.value >= 0 && preSearchSelectedIndex.value < entries.value.length) {
+						selectedIndex.value = preSearchSelectedIndex.value;
+						scrollSelectedIntoView();
+					} else if (entries.value.length > 0) {
+						selectedIndex.value = 0;
+						scrollSelectedIntoView();
+					}
+				});
+			}
+
 			function onKeyDown(e) {
 				const target = e.target;
 				const tag = (target && target.tagName) ? target.tagName.toUpperCase() : '';
@@ -1463,6 +1498,18 @@
 					(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') ||
 					(target && target.isContentEditable) ||
 					(target && typeof target.closest === 'function' && target.closest('input, textarea, select, [contenteditable="true"]'));
+				
+				// Handle Escape key even when in search input
+				if (e.key === 'Escape' && searchTerm.value.trim()) {
+					e.preventDefault();
+					clearSearch();
+					// Blur the search input if it's focused
+					if (tag === 'INPUT' && target.classList.contains('form-control')) {
+						target.blur();
+					}
+					return;
+				}
+				
 				if (isEditableTarget) {
 					return;
 				}
@@ -1511,8 +1558,19 @@
 				}
 			}
 
-			// Keep selection valid when filtering
-			watch(searchTerm, syncSelectionToFilter);
+			// Track selected index before search starts
+			watch(searchTerm, (newVal, oldVal) => {
+				const wasEmpty = !oldVal || oldVal.trim() === '';
+				const isEmpty = !newVal || newVal.trim() === '';
+				
+				// When search starts (transitions from empty to non-empty), save current selection
+				if (wasEmpty && !isEmpty && selectedIndex.value >= 0 && selectedIndex.value < entries.value.length) {
+					preSearchSelectedIndex.value = selectedIndex.value;
+				}
+				
+				// Sync selection when search term changes
+				syncSelectionToFilter();
+			});
 			watch(visibleEntries, syncSelectionToFilter);
 
 			function clampZoom(value) {
@@ -1636,6 +1694,7 @@
 				onRowClick,
 				openSelected,
 				onKeyDown,
+				clearSearch,
 				startDrag,
 				zoomScale,
 				minZoom,
