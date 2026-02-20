@@ -209,13 +209,14 @@
 						:key="e.name"
 						@click="onRowClick(idx)"
 						@dblclick="openSelected(idx)"
+						@mousedown="e => handleRowMouseDown(e, idx)"
 					>
 						<div class="flex-grow-1 text-truncate">
 							<div class="d-flex align-items-center gap-2">
 								<span class="badge" :class="e.is_dir ? 'text-bg-success' : (e.is_image ? 'text-bg-warning' : (e.is_video ? 'text-bg-info' : 'text-bg-secondary'))">
 									[[ e.is_dir ? 'DIR' : (e.is_image ? 'IMG' : (e.is_video ? 'VID' : 'FILE')) ]]
 								</span>
-								<span class="text-break text-truncate">[[ e.name ]]</span>
+								<span class="text-break text-truncate filename-selectable">[[ e.name ]]</span>
 								<span v-if="showModifiedTimes" class="small text-truncate text-muted" :class="{'text-white': idx === selectedIndex}">
 									[[ formatMtime(e) || '—' ]]
 								</span>
@@ -780,7 +781,35 @@
 				scrollSelectedIntoView();
 			}
 			
+			let isSelectingText = false;
+			let mouseDownTarget = null;
+			
+			function handleRowMouseDown(e, idx) {
+				// Check if user is clicking on the filename span (for text selection)
+				const target = e.target;
+				mouseDownTarget = target;
+				if (target && (target.classList.contains('filename-selectable') || target.closest('.filename-selectable'))) {
+					// Allow text selection - don't prevent default
+					isSelectingText = true;
+					return;
+				}
+				isSelectingText = false;
+			}
+			
 			function onRowClick(idx) {
+				// Check if user has selected text (text selection takes priority)
+				const selection = window.getSelection();
+				if (selection && selection.toString().trim().length > 0) {
+					return; // User is selecting text, don't change row selection
+				}
+				
+				// Also check if click was on filename span
+				if (isSelectingText && mouseDownTarget && 
+				    (mouseDownTarget.classList.contains('filename-selectable') || mouseDownTarget.closest('.filename-selectable'))) {
+					isSelectingText = false;
+					return;
+				}
+				
 				setSelected(idx);
 				if (idx >= 0 && idx < visibleEntries.value.length) {
 					const item = visibleEntries.value[idx];
