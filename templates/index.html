@@ -174,6 +174,17 @@
 							<input class="form-check-input" type="checkbox" id="toggleThumbnails" v-model="showThumbnails">
 							<label class="form-check-label small text-muted" for="toggleThumbnails">Thumbnails</label>
 						</div>
+						<div v-if="showThumbnails" class="d-flex align-items-center gap-1">
+							<input
+								type="range"
+								class="form-range mb-0 thumbnail-size-slider"
+								min="16"
+								max="128"
+								step="4"
+								v-model.number="thumbnailSize"
+							/>
+							<span class="small text-muted" style="min-width: 2.5rem;">[[ thumbnailSize ]]px</span>
+						</div>
 						<div class="form-check form-switch m-0">
 							<input class="form-check-input" type="checkbox" id="toggleMtime" v-model="showModifiedTimes">
 							<label class="form-check-label small text-muted" for="toggleMtime">Modified time</label>
@@ -213,7 +224,6 @@
 						:key="e.name"
 						@click="onRowClick(idx)"
 						@dblclick="openSelected(idx)"
-						@mousedown="e => handleRowMouseDown(e, idx)"
 					>
 						<div class="flex-grow-1 text-truncate">
 							<div class="d-flex align-items-center gap-2">
@@ -225,6 +235,7 @@
 									:src="buildThumbnailUrl(e)"
 									:alt="e.name"
 									class="file-thumbnail"
+									:style="{ width: thumbnailSize + 'px', height: thumbnailSize + 'px' }"
 									@error="handleThumbnailError"
 									loading="lazy"
 								/>
@@ -580,6 +591,7 @@
 			const maxPointSize = 0.1;
 			const showModifiedTimes = ref(false);
 			const showThumbnails = ref(false);
+			const thumbnailSize = ref(32);
 			const showPreviewMtime = ref(false);
 			const previewImageDimensionsText = computed(() => {
 				const dims = previewImageDims.value || {};
@@ -794,35 +806,15 @@
 				scrollSelectedIntoView();
 			}
 			
-			let isSelectingText = false;
-			let mouseDownTarget = null;
-			
-			function handleRowMouseDown(e, idx) {
-				// Check if user is clicking on the filename span (for text selection)
-				const target = e.target;
-				mouseDownTarget = target;
-				if (target && (target.classList.contains('filename-selectable') || target.closest('.filename-selectable'))) {
-					// Allow text selection - don't prevent default
-					isSelectingText = true;
-					return;
-				}
-				isSelectingText = false;
-			}
-			
 			function onRowClick(idx) {
-				// Check if user has selected text (text selection takes priority)
+				// Only prevent row selection if user has actually selected text (dragged to highlight)
+				// This allows text selection/copying without changing row selection
 				const selection = window.getSelection();
 				if (selection && selection.toString().trim().length > 0) {
 					return; // User is selecting text, don't change row selection
 				}
 				
-				// Also check if click was on filename span
-				if (isSelectingText && mouseDownTarget && 
-				    (mouseDownTarget.classList.contains('filename-selectable') || mouseDownTarget.closest('.filename-selectable'))) {
-					isSelectingText = false;
-					return;
-				}
-				
+				// Allow clicking anywhere on the row to select it
 				setSelected(idx);
 				if (idx >= 0 && idx < visibleEntries.value.length) {
 					const item = visibleEntries.value[idx];
@@ -864,7 +856,7 @@
 				const params = new URLSearchParams();
 				params.set('root', selectedRoot.value || '');
 				params.set('path', fullPath);
-				params.set('size', '32'); // 32px thumbnails
+				params.set('size', String(thumbnailSize.value));
 				return '/api/thumbnail?' + params.toString();
 			}
 
@@ -1593,15 +1585,22 @@
 			}
 
 			function scrollSelectedIntoView() {
-				// Ensure selected row stays in view
+				// Ensure selected row stays in view after Vue re-renders the DOM
 				if (typeof window === 'undefined' || !listBody.value) return;
-				const raf = window.requestAnimationFrame || (cb => setTimeout(cb, 0));
-				raf(() => {
-					const rows = listBody.value.querySelectorAll('button.list-group-item');
-					if (selectedIndex.value < 0 || selectedIndex.value >= rows.length) return;
-					rows[selectedIndex.value].scrollIntoView({ block: 'nearest' });
+				nextTick(() => {
+					requestAnimationFrame(() => {
+						if (!listBody.value) return;
+						const rows = listBody.value.querySelectorAll('button.list-group-item');
+						if (selectedIndex.value < 0 || selectedIndex.value >= rows.length) return;
+						rows[selectedIndex.value].scrollIntoView({ block: 'nearest' });
+					});
 				});
 			}
+
+			// Always keep the highlighted row visible when selectedIndex changes
+			watch(selectedIndex, () => {
+				scrollSelectedIntoView();
+			});
 
 			function syncSelectionToFilter() {
 				if (visibleEntries.value.length === 0) {
@@ -1778,6 +1777,7 @@
 				setPointSize,
 				showModifiedTimes,
 				showThumbnails,
+				thumbnailSize,
 				showPreviewMtime,
 				formatMtime,
 				buildThumbnailUrl,

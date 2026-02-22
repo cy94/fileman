@@ -24,6 +24,9 @@
 	border: 1px solid rgba(0, 0, 0, 0.1);
 	background-color: #f8f9fa;
 }
+.thumbnail-size-slider {
+	width: 80px;
+}
 .file-list-body .badge {
 	font-weight: 500;
 }
