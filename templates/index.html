@@ -73,14 +73,16 @@
 		import * as THREE from 'three';
 		import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 		import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
+		import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 		// Expose on window for the existing viewer code.
 		// Clone to avoid mutating the module namespace (which is non-extensible).
 		window.THREE = Object.assign({}, THREE, {
 			TrackballControls,
-			PLYLoader
+			PLYLoader,
+			GLTFLoader
 		});
-		console.log('✓ Three.js ES modules loaded (three + TrackballControls + PLYLoader)');
+		console.log('✓ Three.js ES modules loaded (three + TrackballControls + PLYLoader + GLTFLoader)');
 	</script>
 </head>
 <body class="bg-body">
@@ -400,7 +402,7 @@
 		cfg: 'ini',
 		conf: 'ini'
 	};
-	const PLY_EXTENSIONS = new Set(['ply']);
+	const THREE_D_EXTENSIONS = new Set(['ply', 'glb']);
 	const DEFAULT_TEXT_PREVIEW_BYTES = 512 * 1024;
 
 	const app = createApp({
@@ -451,9 +453,9 @@
 				const name = typeof entryOrName === 'string' ? entryOrName : (entryOrName && entryOrName.name) || '';
 				return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(name));
 			}
-			function isPlyFile(entryOrName) {
+			function is3DFile(entryOrName) {
 				const name = typeof entryOrName === 'string' ? entryOrName : (entryOrName && entryOrName.name) || '';
-				return PLY_EXTENSIONS.has(getFileExtension(name));
+				return THREE_D_EXTENSIONS.has(getFileExtension(name));
 			}
 			function isLikelyTextMime(mime = '') {
 				if (!mime || typeof mime !== 'string') return false;
@@ -470,7 +472,7 @@
 			}
 			function shouldPreviewAsText(entry) {
 				if (!entry || entry.is_dir) return false;
-				if (entry.is_image || isPlyFile(entry)) return false;
+				if (entry.is_image || is3DFile(entry)) return false;
 				if (isTextPreviewFile(entry)) return true;
 				const mime = getEntryMime(entry);
 				if (isLikelyTextMime(mime)) return true;
@@ -492,7 +494,7 @@
 			}
 			function supportsInlinePreview(entry) {
 				if (!entry || entry.is_dir) return false;
-				return entry.is_image || entry.is_video || shouldPreviewAsText(entry) || isPlyFile(entry);
+				return entry.is_image || entry.is_video || shouldPreviewAsText(entry) || is3DFile(entry);
 			}
 			function resetPreviewToNone({ bumpToken = true } = {}) {
 				if (bumpToken) {
@@ -1057,11 +1059,11 @@
 						});
 					return;
 				}
-				if (isPlyFile(item)) {
+				if (is3DFile(item)) {
 					previewMode.value = 'ply';
 					previewLoading.value = true;
 					zoomScale.value = 1;
-					loadPlyPreview(fullPath, token);
+					load3DPreview(fullPath, token);
 					return;
 				}
 				resetPreviewToNone({ bumpToken: false });
@@ -1083,7 +1085,7 @@
 			function onPreviewVideoError(event) {
 				previewError.value = 'Failed to load video. The file may be corrupted or in an unsupported format.';
 			}
-			function loadPlyPreview(fullPath, token) {
+			function load3DPreview(fullPath, token) {
 				if (typeof window === 'undefined' || typeof window.THREE === 'undefined') {
 					previewLoading.value = false;
 					previewError.value = 'Three.js is not available.';
@@ -1091,17 +1093,21 @@
 					return;
 				}
 				
-				// Wait for PLYLoader to be available (scripts might still be loading)
+				// Determine file type
+				const ext = getFileExtension(fullPath);
+				const isGLB = ext === 'glb';
+				
+				// Wait for loaders to be available (scripts might still be loading)
 				let retryCount = 0;
 				const maxRetries = 50; // 10 seconds total (50 * 200ms)
 				
 				function tryLoad() {
 					if (token !== activePreviewToken) return;
 					
-					// Check for PLYLoader
-					let PLYLoader = THREE.PLYLoader;
+					// Check for appropriate loader
+					let Loader = isGLB ? THREE.GLTFLoader : THREE.PLYLoader;
 					
-					if (!PLYLoader) {
+					if (!Loader) {
 						retryCount++;
 						if (retryCount < maxRetries) {
 							// Retry after a short delay
@@ -1110,14 +1116,18 @@
 						} else {
 							// Give up after max retries
 							previewLoading.value = false;
-							previewError.value = 'Three.js PLYLoader failed to load. Please refresh the page.';
+							previewError.value = `Three.js ${isGLB ? 'GLTFLoader' : 'PLYLoader'} failed to load. Please refresh the page.`;
 							previewMode.value = 'none';
 							return;
 						}
 					}
 					
-					// PLYLoader is available, proceed with loading
-					loadPlyFile(fullPath, token, PLYLoader);
+					// Loader is available, proceed with loading
+					if (isGLB) {
+						loadGLBFile(fullPath, token, Loader);
+					} else {
+						loadPlyFile(fullPath, token, Loader);
+					}
 				}
 				
 				tryLoad();
@@ -1162,6 +1172,55 @@
 						}
 					);
 				});
+			}
+			function loadGLBFile(fullPath, token, GLTFLoader) {
+				// Wait for Vue to render the DOM before checking for container
+				nextTick(() => {
+					if (token !== activePreviewToken) return;
+					if (!threeContainer.value) {
+						previewLoading.value = false;
+						previewError.value = '3D preview container unavailable.';
+						previewMode.value = 'none';
+						return;
+					}
+					if (!initThreeScene()) {
+						previewLoading.value = false;
+						previewError.value = 'Unable to initialize 3D renderer.';
+						previewMode.value = 'none';
+						return;
+					}
+					const loader = new GLTFLoader();
+					const url = buildFileUrl(fullPath);
+					loader.load(
+						url,
+						gltf => {
+							if (token !== activePreviewToken) return;
+							previewLoading.value = false;
+							if (!gltf || !gltf.scene) {
+								previewError.value = 'GLB file appears to be empty or invalid.';
+								return;
+							}
+							displayGLBScene(gltf.scene);
+						},
+						undefined,
+						err => {
+							if (token !== activePreviewToken) return;
+							previewLoading.value = false;
+							previewError.value = err && err.message ? err.message : 'Failed to load GLB file.';
+							disposeThreeScene();
+							previewMode.value = 'none';
+						}
+					);
+				});
+			}
+			function displayGLBScene(scene) {
+				if (!scene || !threeScene) {
+					previewError.value = 'Unable to render GLB scene.';
+					return;
+				}
+				// GLB files already contain a complete scene with materials, etc.
+				// Just add it to our scene
+				replaceThreeObject(scene);
 			}
 			function displayPlyGeometry(geometry) {
 				if (!geometry || !threeScene) {
