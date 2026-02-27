@@ -1134,6 +1134,384 @@
 			}
 			
 			function loadPlyFile(fullPath, token, PLYLoader) {
+				// Custom PLY parser so that both `property list uchar int vertex_indices`
+				// and `property list uchar uint vertex_indices` are treated as mesh faces.
+				// Supports ascii and binary_little_endian PLY with vertex and face elements.
+				function parsePlyBufferToGeometry(buffer) {
+					if (typeof THREE === 'undefined' || !THREE.BufferGeometry) {
+						throw new Error('Three.js is not available for PLY parsing.');
+					}
+					const bytes = new Uint8Array(buffer);
+					if (bytes.length === 0) {
+						throw new Error('Empty PLY file.');
+					}
+					const textDecoder = new TextDecoder('ascii');
+					const fullText = textDecoder.decode(bytes);
+					const endHeaderIdx = fullText.indexOf('end_header');
+					if (endHeaderIdx === -1) {
+						throw new Error('Invalid PLY: missing end_header.');
+					}
+					const endHeaderLineIdx = fullText.indexOf('\n', endHeaderIdx);
+					const headerEndCharIdx = endHeaderLineIdx === -1 ? fullText.length : (endHeaderLineIdx + 1);
+					const headerText = fullText.substring(0, headerEndCharIdx);
+					const headerLines = headerText
+						.split(/\r?\n/)
+						.map(l => l.trim())
+						.filter(l => l.length > 0 && !l.startsWith('comment'));
+
+					let format = null;
+					let isAscii = false;
+					let isBinaryLittle = false;
+					const elements = [];
+					let currentElement = null;
+
+					for (const line of headerLines) {
+						if (line.startsWith('format ')) {
+							const parts = line.split(/\s+/);
+							format = parts[1];
+							if (format === 'ascii') {
+								isAscii = true;
+							} else if (format === 'binary_little_endian') {
+								isBinaryLittle = true;
+							} else {
+								throw new Error('Unsupported PLY format: ' + format);
+							}
+						} else if (line.startsWith('element ')) {
+							const parts = line.split(/\s+/);
+							currentElement = {
+								name: parts[1],
+								count: parseInt(parts[2], 10),
+								properties: []
+							};
+							elements.push(currentElement);
+						} else if (line.startsWith('property ') && currentElement) {
+							const tokens = line.split(/\s+/);
+							if (tokens[1] === 'list') {
+								currentElement.properties.push({
+									kind: 'list',
+									name: tokens[4],
+									countType: tokens[2],
+									itemType: tokens[3]
+								});
+							} else {
+								currentElement.properties.push({
+									kind: 'scalar',
+									name: tokens[2],
+									type: tokens[1]
+								});
+							}
+						}
+					}
+
+					const vertexElem = elements.find(e => e.name === 'vertex');
+					if (!vertexElem || !Number.isFinite(vertexElem.count)) {
+						throw new Error('PLY missing vertex element.');
+					}
+					const faceElem = elements.find(e => e.name === 'face');
+
+					function isRedName(name) {
+						if (!name) return false;
+						const n = String(name).toLowerCase();
+						return n === 'red' || n === 'diffuse_red' || n === 'r';
+					}
+					function isGreenName(name) {
+						if (!name) return false;
+						const n = String(name).toLowerCase();
+						return n === 'green' || n === 'diffuse_green' || n === 'g';
+					}
+					function isBlueName(name) {
+						if (!name) return false;
+						const n = String(name).toLowerCase();
+						return n === 'blue' || n === 'diffuse_blue' || n === 'b';
+					}
+
+					function readScalarFromTokens(type, token) {
+						// For ascii, parse everything as float then cast as needed.
+						const v = parseFloat(token);
+						if (Number.isNaN(v)) return 0;
+						return v;
+					}
+
+					function mapScalarTypeToSize(type) {
+						switch (type) {
+							case 'char':
+							case 'uchar':
+							case 'int8':
+							case 'uint8':
+								return 1;
+							case 'short':
+							case 'ushort':
+							case 'int16':
+							case 'uint16':
+								return 2;
+							case 'int':
+							case 'uint':
+							case 'int32':
+							case 'uint32':
+							case 'float':
+							case 'float32':
+								return 4;
+							case 'double':
+							case 'float64':
+								return 8;
+							default:
+								throw new Error('Unsupported PLY type: ' + type);
+						}
+					}
+
+					function readScalarFromDataView(view, offset, type, littleEndian) {
+						switch (type) {
+							case 'char':
+							case 'int8':
+								return { value: view.getInt8(offset), bytes: 1 };
+							case 'uchar':
+							case 'uint8':
+								return { value: view.getUint8(offset), bytes: 1 };
+							case 'short':
+							case 'int16':
+								return { value: view.getInt16(offset, littleEndian), bytes: 2 };
+							case 'ushort':
+							case 'uint16':
+								return { value: view.getUint16(offset, littleEndian), bytes: 2 };
+							case 'int':
+							case 'int32':
+								return { value: view.getInt32(offset, littleEndian), bytes: 4 };
+							case 'uint':
+							case 'uint32':
+								return { value: view.getUint32(offset, littleEndian), bytes: 4 };
+							case 'float':
+							case 'float32':
+								return { value: view.getFloat32(offset, littleEndian), bytes: 4 };
+							case 'double':
+							case 'float64':
+								return { value: view.getFloat64(offset, littleEndian), bytes: 8 };
+							default:
+								throw new Error('Unsupported PLY type: ' + type);
+						}
+					}
+
+					const vertexCount = vertexElem.count;
+					const positions = new Float32Array(vertexCount * 3);
+					let colors = null;
+					let hasColor = false;
+
+					const vertexProps = vertexElem.properties || [];
+
+					if (isAscii) {
+						const bodyText = fullText.substring(headerEndCharIdx);
+						const bodyLines = bodyText.split(/\r?\n/).filter(line => line.trim().length > 0);
+						let lineIndex = 0;
+
+						// Read vertices
+						for (let i = 0; i < vertexCount; i++) {
+							if (lineIndex >= bodyLines.length) {
+								throw new Error('Unexpected end of PLY vertex data.');
+							}
+							const tokens = bodyLines[lineIndex++].trim().split(/\s+/);
+							let tIdx = 0;
+							let x = 0, y = 0, z = 0;
+							let r = 1, g = 1, b = 1;
+							for (const prop of vertexProps) {
+								const token = tokens[tIdx++];
+								if (token === undefined) break;
+								const v = readScalarFromTokens(prop.type, token);
+								const name = prop.name;
+								if (name === 'x') x = v;
+								else if (name === 'y') y = v;
+								else if (name === 'z') z = v;
+								else if (isRedName(name)) { r = v; hasColor = true; }
+								else if (isGreenName(name)) { g = v; hasColor = true; }
+								else if (isBlueName(name)) { b = v; hasColor = true; }
+							}
+							const base = i * 3;
+							positions[base] = x;
+							positions[base + 1] = y;
+							positions[base + 2] = z;
+							if (hasColor) {
+								if (!colors) colors = new Float32Array(vertexCount * 3);
+								colors[base] = r;
+								colors[base + 1] = g;
+								colors[base + 2] = b;
+							}
+						}
+
+						// Read faces (if any)
+						const indices = [];
+						if (faceElem && faceElem.count > 0) {
+							const faceProps = faceElem.properties || [];
+							for (let fi = 0; fi < faceElem.count; fi++) {
+								if (lineIndex >= bodyLines.length) {
+									break;
+								}
+								const tokens = bodyLines[lineIndex++].trim().split(/\s+/);
+								let tIdx = 0;
+								let faceR = null, faceG = null, faceB = null;
+								let faceVerts = null;
+								for (const prop of faceProps) {
+									if (prop.kind === 'list' && prop.name === 'vertex_indices') {
+										const listCount = parseInt(tokens[tIdx++], 10);
+										const verts = [];
+										for (let k = 0; k < listCount; k++) {
+											const tk = tokens[tIdx++];
+											if (tk === undefined) break;
+											const idx = parseInt(tk, 10);
+											if (Number.isFinite(idx)) verts.push(idx);
+										}
+										faceVerts = verts;
+										if (verts.length >= 3) {
+											for (let k = 1; k < verts.length - 1; k++) {
+												indices.push(verts[0], verts[k], verts[k + 1]);
+											}
+										}
+									} else if (prop.kind === 'scalar') {
+										const token = tokens[tIdx++];
+										if (token === undefined) continue;
+										const v = readScalarFromTokens(prop.type, token);
+										const name = prop.name;
+										if (isRedName(name)) faceR = v;
+										else if (isGreenName(name)) faceG = v;
+										else if (isBlueName(name)) faceB = v;
+									}
+								}
+								// If we have per-face colors and no per-vertex colors, propagate to vertices
+								if (!colors && faceVerts && faceVerts.length > 0 && (faceR !== null || faceG !== null || faceB !== null)) {
+									colors = new Float32Array(vertexCount * 3);
+									hasColor = true;
+								}
+								if (colors && faceVerts && faceVerts.length > 0 && (faceR !== null || faceG !== null || faceB !== null)) {
+									const r = faceR !== null ? faceR : 1;
+									const g = faceG !== null ? faceG : 1;
+									const b = faceB !== null ? faceB : 1;
+									for (let vi = 0; vi < faceVerts.length; vi++) {
+										const idx = faceVerts[vi];
+										if (idx < 0 || idx >= vertexCount) continue;
+										const base = idx * 3;
+										colors[base] = r;
+										colors[base + 1] = g;
+										colors[base + 2] = b;
+									}
+								}
+							}
+						}
+
+						const geometry = new THREE.BufferGeometry();
+						geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+						if (colors && hasColor) {
+							geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+						}
+						if (indices.length > 0) {
+							geometry.setIndex(indices);
+						}
+						return geometry;
+					}
+
+					if (!isBinaryLittle) {
+						throw new Error('Only ascii and binary_little_endian PLY are supported.');
+					}
+
+					// Binary little endian
+					const view = new DataView(buffer);
+					let offset = headerEndCharIdx;
+					const little = true;
+
+					// Read vertices
+					for (let i = 0; i < vertexCount; i++) {
+						let x = 0, y = 0, z = 0;
+						let r = 1, g = 1, b = 1;
+						for (const prop of vertexProps) {
+							if (prop.kind === 'scalar') {
+								const { value, bytes: size } = readScalarFromDataView(view, offset, prop.type, little);
+								offset += size;
+								const name = prop.name;
+								if (name === 'x') x = value;
+								else if (name === 'y') y = value;
+								else if (name === 'z') z = value;
+								else if (isRedName(name)) { r = value; hasColor = true; }
+								else if (isGreenName(name)) { g = value; hasColor = true; }
+								else if (isBlueName(name)) { b = value; hasColor = true; }
+							} else if (prop.kind === 'list') {
+								// Uncommon on vertices; still consume to keep offset correct
+								const { value: listCount, bytes: countBytes } = readScalarFromDataView(view, offset, prop.countType, little);
+								offset += countBytes;
+								const itemSize = mapScalarTypeToSize(prop.itemType);
+								offset += itemSize * listCount;
+							}
+						}
+						const base = i * 3;
+						positions[base] = x;
+						positions[base + 1] = y;
+						positions[base + 2] = z;
+						if (hasColor) {
+							if (!colors) colors = new Float32Array(vertexCount * 3);
+							colors[base] = r;
+							colors[base + 1] = g;
+							colors[base + 2] = b;
+						}
+					}
+
+					const indices = [];
+					if (faceElem && faceElem.count > 0) {
+						const faceProps = faceElem.properties || [];
+						for (let fi = 0; fi < faceElem.count; fi++) {
+							let faceR = null, faceG = null, faceB = null;
+							let faceVerts = null;
+							for (const prop of faceProps) {
+								if (prop.kind === 'list' && prop.name === 'vertex_indices') {
+									const { value: listCount, bytes: countBytes } = readScalarFromDataView(view, offset, prop.countType, little);
+									offset += countBytes;
+									const verts = [];
+									for (let k = 0; k < listCount; k++) {
+										const { value: idx, bytes: itemBytes } = readScalarFromDataView(view, offset, prop.itemType, little);
+										offset += itemBytes;
+										if (Number.isFinite(idx)) verts.push(idx);
+									}
+									faceVerts = verts;
+									if (verts.length >= 3) {
+										for (let k = 1; k < verts.length - 1; k++) {
+											indices.push(verts[0], verts[k], verts[k + 1]);
+										}
+									}
+								} else if (prop.kind === 'scalar') {
+									const { value, bytes: size } = readScalarFromDataView(view, offset, prop.type, little);
+									offset += size;
+									const name = prop.name;
+									if (isRedName(name)) faceR = value;
+									else if (isGreenName(name)) faceG = value;
+									else if (isBlueName(name)) faceB = value;
+								}
+							}
+							// If we have per-face colors and no per-vertex colors, propagate to vertices
+							if (!colors && faceVerts && faceVerts.length > 0 && (faceR !== null || faceG !== null || faceB !== null)) {
+								colors = new Float32Array(vertexCount * 3);
+								hasColor = true;
+							}
+							if (colors && faceVerts && faceVerts.length > 0 && (faceR !== null || faceG !== null || faceB !== null)) {
+								const r = faceR !== null ? faceR : 1;
+								const g = faceG !== null ? faceG : 1;
+								const b = faceB !== null ? faceB : 1;
+								for (let vi = 0; vi < faceVerts.length; vi++) {
+									const idx = faceVerts[vi];
+									if (idx < 0 || idx >= vertexCount) continue;
+									const base = idx * 3;
+									colors[base] = r;
+									colors[base + 1] = g;
+									colors[base + 2] = b;
+								}
+							}
+						}
+					}
+
+					const geometry = new THREE.BufferGeometry();
+					geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+					if (colors && hasColor) {
+						geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+					}
+					if (indices.length > 0) {
+						geometry.setIndex(indices);
+					}
+					return geometry;
+				}
+
 				// Wait for Vue to render the DOM before checking for container
 				nextTick(() => {
 					if (token !== activePreviewToken) return;
@@ -1149,28 +1527,37 @@
 						previewMode.value = 'none';
 						return;
 					}
-					const loader = new PLYLoader();
 					const url = buildFileUrl(fullPath);
-					loader.load(
-						url,
-						geometry => {
+					fetch(url)
+						.then(response => {
+							if (!response.ok) {
+								throw new Error('Failed to load PLY file: ' + response.statusText);
+							}
+							return response.arrayBuffer();
+						})
+						.then(buffer => {
 							if (token !== activePreviewToken) return;
+							let geometry = null;
+							try {
+								geometry = parsePlyBufferToGeometry(buffer);
+							} catch (err) {
+								console.error('Custom PLY parser failed:', err);
+								throw err;
+							}
 							previewLoading.value = false;
 							if (!geometry) {
-								previewError.value = 'PLY file appears to be empty.';
+								previewError.value = 'PLY file appears to be empty or invalid.';
 								return;
 							}
 							displayPlyGeometry(geometry);
-						},
-						undefined,
-						err => {
+						})
+						.catch(err => {
 							if (token !== activePreviewToken) return;
 							previewLoading.value = false;
 							previewError.value = err && err.message ? err.message : 'Failed to load PLY file.';
 							disposeThreeScene();
 							previewMode.value = 'none';
-						}
-					);
+						});
 				});
 			}
 			function loadGLBFile(fullPath, token, GLTFLoader) {
@@ -1235,40 +1622,53 @@
 				if (hasFaces && typeof geometry.computeVertexNormals === 'function') {
 					geometry.computeVertexNormals();
 				}
-				// Check for color attribute - PLYLoader may store it as 'color'
+				// Check for color attribute - PLY loader stores it as 'color'
 				let colorAttribute = null;
 				if (typeof geometry.getAttribute === 'function') {
 					colorAttribute = geometry.getAttribute('color');
 				}
 				const hasColor = Boolean(colorAttribute);
-				
-				// Normalize colors if they're in 0-255 range (common in PLY files)
+
+				// Robust normalization: many PLYs store RGB in [0, 255]; if so, rescale to [0, 1]
 				if (hasColor && colorAttribute) {
 					const colors = colorAttribute.array;
-					let needsNormalization = false;
-					// Check if colors are in 0-255 range
-					for (let i = 0; i < Math.min(colors.length, 9); i++) {
-						if (colors[i] > 1.0) {
-							needsNormalization = true;
-							break;
-						}
-					}
-					if (needsNormalization) {
-						// Normalize from 0-255 to 0-1
+					if (colors && colors.length > 0) {
+						let minC = Number.POSITIVE_INFINITY;
+						let maxC = Number.NEGATIVE_INFINITY;
 						for (let i = 0; i < colors.length; i++) {
-							colors[i] = colors[i] / 255.0;
+							const v = colors[i];
+							if (v < minC) minC = v;
+							if (v > maxC) maxC = v;
 						}
-						colorAttribute.needsUpdate = true;
+						// Heuristic: if values are non‑negative and exceed 1, assume 0‑255 range
+						if (maxC > 1.0 && minC >= 0.0) {
+							const scale = 1.0 / 255.0;
+							for (let i = 0; i < colors.length; i++) {
+								colors[i] = colors[i] * scale;
+							}
+							colorAttribute.needsUpdate = true;
+						}
 					}
 				}
 				
 				let object;
 				if (hasFaces) {
-					const material = new THREE.MeshStandardMaterial({
-						vertexColors: hasColor,
-						flatShading: !geometry.getAttribute('normal'),
-						side: THREE.DoubleSide
-					});
+					// Use lit materials so geometry is visible even with a single flat color.
+					// With vertex colors we still apply shading via lights, which helps reveal shape.
+					const material = hasColor
+						? new THREE.MeshStandardMaterial({
+								vertexColors: true,
+								roughness: 0.8,
+								metalness: 0.0,
+								side: THREE.DoubleSide
+						  })
+						: new THREE.MeshStandardMaterial({
+								color: 0xcccccc,
+								flatShading: !geometry.getAttribute('normal'),
+								roughness: 0.8,
+								metalness: 0.0,
+								side: THREE.DoubleSide
+						  });
 					object = new THREE.Mesh(geometry, material);
 				} else {
 					const material = new THREE.PointsMaterial({
