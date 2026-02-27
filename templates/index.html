@@ -1716,12 +1716,59 @@
 			let zoomTarget = null;
 			
 			function handlePlyWheel(event) {
-				if (previewMode.value !== 'ply' || !threeCamera || !threeControls || !zoomTarget) return;
+				if (previewMode.value !== 'ply' || !threeCamera || !threeControls || !zoomTarget || !threeRenderer) return;
 				event.preventDefault();
 				event.stopPropagation();
 				
-				const delta = event.deltaY || 0;
-				const zoomFactor = delta > 0 ? 1.1 : 0.9; // Zoom out or in
+				const dx = event.deltaX || 0;
+				const dy = event.deltaY || 0;
+
+				// Trackpad two-finger pan often emits wheel events. If we always interpret wheel as zoom,
+				// panning feels like it zooms in/out.
+				//
+				// Simplified heuristic:
+				// - ctrlKey wheel is usually pinch-zoom => always zoom
+				// - if horizontal component dominates (|dx| > |dy|), treat as pan
+				// - otherwise, treat as zoom (standard mouse wheel & vertical scroll)
+				const isPinchZoom = event.ctrlKey === true;
+				const horizontalDominant = Math.abs(dx) > Math.abs(dy);
+				const shouldPan = !isPinchZoom && horizontalDominant && Math.abs(dx) > 0;
+
+				// Keep zoomTarget synced with the controls target (TrackballControls updates target on pan/rotate)
+				if (threeControls.target) {
+					zoomTarget.copy(threeControls.target);
+				}
+
+				if (shouldPan) {
+					// Pan camera + target in screen space without changing distance (no "dolly" effect)
+					const rect = threeRenderer.domElement.getBoundingClientRect();
+					const denom = Math.max(1, Math.min(rect.width, rect.height));
+					const dist = threeCamera.position.distanceTo(zoomTarget);
+
+					// Scale pan by distance so it feels consistent across zoom levels
+					const panScale = dist / denom;
+
+					const dir = new THREE.Vector3();
+					threeCamera.getWorldDirection(dir);
+					const right = new THREE.Vector3().crossVectors(dir, threeCamera.up).normalize();
+					const up = new THREE.Vector3().copy(threeCamera.up).normalize();
+
+					const panOffset = new THREE.Vector3()
+						.addScaledVector(right, dx * panScale)
+						.addScaledVector(up, -dy * panScale);
+
+					threeCamera.position.add(panOffset);
+					zoomTarget.add(panOffset);
+					if (threeControls.target) {
+						threeControls.target.copy(zoomTarget);
+					}
+					if (typeof threeControls.update === 'function') {
+						threeControls.update();
+					}
+					return;
+				}
+
+				const zoomFactor = dy > 0 ? 1.1 : 0.9; // Zoom out or in
 				
 				// Get current distance from camera to target
 				const currentDist = threeCamera.position.distanceTo(zoomTarget);
