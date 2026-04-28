@@ -1,4 +1,5 @@
 import os
+import shutil
 import mimetypes
 import yaml
 from pathlib import Path
@@ -96,6 +97,13 @@ def create_app() -> Flask:
 						size = stat.st_size
 						is_dir = entry.is_dir(follow_symlinks=False)
 						mime, _ = mimetypes.guess_type(entry.name)
+						# Fallback for systems with incomplete MIME databases
+						if not mime:
+							ext = Path(entry.name).suffix.lower()
+							if ext in (".mp4", ".webm", ".ogg", ".mov", ".mkv", ".avi"):
+								mime = "video/mp4" if ext == ".mp4" else f"video/{ext[1:]}"
+							elif ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"):
+								mime = f"image/{'jpeg' if ext in ('.jpg', '.jpeg') else ext[1:]}"
 						is_image = (not is_dir) and isinstance(mime, str) and mime.startswith("image/")
 						is_video = (not is_dir) and isinstance(mime, str) and mime.startswith("video/")
 						entries.append({
@@ -171,7 +179,66 @@ def create_app() -> Flask:
 		if not path.exists() or not path.is_file():
 			abort(404, description="File not found")
 		mime, _ = mimetypes.guess_type(str(path))
-		return send_file(path, mimetype=mime or "application/octet-stream", as_attachment=False, conditional=True)
+		# Ensure video MIME for common extensions (mimetypes may miss some on minimal systems)
+		if not mime and path.suffix.lower() in (".mp4", ".webm", ".ogg", ".mov"):
+			mime = "video/mp4" if path.suffix.lower() == ".mp4" else f"video/{path.suffix[1:]}"
+		mime = mime or "application/octet-stream"
+
+		file_size = path.stat().st_size
+		range_header = request.headers.get("Range")
+
+		if range_header:
+			# Parse "Range: bytes=start-end" or "bytes=-last" (suffix-byte-range)
+			try:
+				byte_range = range_header.replace("bytes=", "").strip()
+				start_str, _, end_str = byte_range.partition("-")
+				start_str = start_str.strip()
+				end_str = end_str.strip()
+				if start_str and end_str:
+					start = int(start_str)
+					end = min(int(end_str), file_size - 1)
+				elif start_str:
+					start = int(start_str)
+					end = file_size - 1
+				elif end_str:
+					# Suffix range: last N bytes (e.g. bytes=-500)
+					n = int(end_str)
+					start = max(0, file_size - n)
+					end = file_size - 1
+				else:
+					abort(416)
+				start = max(0, start)
+				end = min(end, file_size - 1)
+				if start > end:
+					abort(416)
+				length = end - start + 1
+			except (ValueError, AttributeError):
+				abort(416)
+
+			def generate():
+				with open(path, "rb") as f:
+					f.seek(start)
+					remaining = length
+					chunk = 65536
+					while remaining > 0:
+						data = f.read(min(chunk, remaining))
+						if not data:
+							break
+						remaining -= len(data)
+						yield data
+
+			headers = {
+				"Content-Range": f"bytes {start}-{end}/{file_size}",
+				"Accept-Ranges": "bytes",
+				"Content-Length": str(length),
+				"Content-Type": mime,
+			}
+			return Response(generate(), status=206, headers=headers, direct_passthrough=True)
+
+		# Non-range request: serve whole file but advertise range support
+		resp = send_file(path, mimetype=mime, as_attachment=False)
+		resp.headers["Accept-Ranges"] = "bytes"
+		return resp
 
 	@app.get("/api/download")
 	def api_download():
@@ -179,6 +246,8 @@ def create_app() -> Flask:
 		if not path.exists() or not path.is_file():
 			abort(404, description="File not found")
 		mime, _ = mimetypes.guess_type(str(path))
+		if not mime and path.suffix.lower() in (".mp4", ".webm", ".ogg", ".mov"):
+			mime = "video/mp4" if path.suffix.lower() == ".mp4" else f"video/{path.suffix[1:]}"
 		return send_file(path, mimetype=mime or "application/octet-stream", as_attachment=True, download_name=path.name)
 
 	@app.get("/api/text_preview")
@@ -244,6 +313,58 @@ def create_app() -> Flask:
 				return Response(output.read(), mimetype='image/jpeg')
 		except Exception as e:
 			abort(500, description=f"Unable to generate thumbnail: {str(e)}")
+
+	@app.post("/api/delete")
+	def api_delete():
+		roots = get_allowed_roots()
+		payload = request.get_json(silent=True) or {}
+		root = payload.get("root") or request.args.get("root") or (roots[0] if roots else "/")
+		root_path = Path(root)
+		if not root_path.exists() or not root_path.is_dir():
+			abort(400, description="Root must be an existing directory")
+
+		raw_paths = payload.get("paths")
+		if raw_paths is None:
+			single = payload.get("path") or request.args.get("path")
+			if not single:
+				abort(400, description="Missing path or paths")
+			raw_paths = [single]
+		if not isinstance(raw_paths, list) or not raw_paths:
+			abort(400, description="paths must be a non-empty list")
+
+		results = []
+		for raw in raw_paths:
+			if not isinstance(raw, str) or not raw:
+				results.append({"path": raw, "ok": False, "error": "Invalid path"})
+				continue
+			target = coerce_path(raw, root)
+			if not is_within_root(target, root):
+				results.append({"path": raw, "ok": False, "error": "Path is outside the chosen root"})
+				continue
+			if Path(target).resolve() == root_path.resolve():
+				results.append({"path": raw, "ok": False, "error": "Refusing to delete the root directory"})
+				continue
+			path = Path(target)
+			if not path.exists() and not path.is_symlink():
+				results.append({"path": raw, "ok": False, "error": "Path not found"})
+				continue
+			try:
+				if path.is_symlink() or path.is_file():
+					path.unlink()
+				elif path.is_dir():
+					shutil.rmtree(path)
+				else:
+					results.append({"path": raw, "ok": False, "error": "Unsupported path type"})
+					continue
+				results.append({"path": str(path), "ok": True})
+			except PermissionError:
+				results.append({"path": raw, "ok": False, "error": "Permission denied"})
+			except OSError as exc:
+				results.append({"path": raw, "ok": False, "error": f"Delete failed: {exc}"})
+
+		ok_count = sum(1 for r in results if r["ok"])
+		fail_count = len(results) - ok_count
+		return jsonify({"results": results, "ok_count": ok_count, "fail_count": fail_count})
 
 	return app
 

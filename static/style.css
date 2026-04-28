@@ -190,6 +190,30 @@
 	color: #198754;
 	background-color: rgba(25, 135, 84, 0.12);
 }
+.delete-entry-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	border-radius: 0.25rem;
+	color: #6c757d;
+	cursor: pointer;
+	transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+}
+.delete-entry-icon:hover {
+	color: #dc3545;
+	background-color: rgba(220, 53, 69, 0.1);
+}
+.row-check {
+	min-height: 0;
+	padding-left: 1.25rem;
+	margin-bottom: 0;
+}
+.row-check .form-check-input {
+	margin-top: 0.15rem;
+	cursor: pointer;
+}
 .copy-selected-btn svg {
 	flex-shrink: 0;
 }

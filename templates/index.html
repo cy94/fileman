@@ -161,6 +161,17 @@
 						</small>
 					</div>
 					<div class="d-flex align-items-center">
+						<div class="form-check me-2 row-check flex-shrink-0" :title="visibleEntries.length ? 'Select all visible' : ''">
+							<input
+								class="form-check-input"
+								type="checkbox"
+								:checked="allVisibleChecked"
+								:indeterminate.prop="someVisibleChecked && !allVisibleChecked"
+								@change="toggleAllVisible"
+								:disabled="visibleEntries.length === 0"
+								aria-label="Select all visible"
+							/>
+						</div>
 						<div class="flex-grow-1">Name</div>
 						<div style="width: 120px;" class="text-end">Size</div>
 					</div>
@@ -187,10 +198,14 @@
 							/>
 							<span class="small text-muted" style="min-width: 2.5rem;">[[ thumbnailSize ]]px</span>
 						</div>
-						<div class="form-check form-switch m-0">
-							<input class="form-check-input" type="checkbox" id="toggleMtime" v-model="showModifiedTimes">
-							<label class="form-check-label small text-muted" for="toggleMtime">Modified time</label>
-						</div>
+					<div class="form-check form-switch m-0">
+						<input class="form-check-input" type="checkbox" id="toggleMtime" v-model="showModifiedTimes">
+						<label class="form-check-label small text-muted" for="toggleMtime">Modified time</label>
+					</div>
+					<div class="form-check form-switch m-0">
+						<input class="form-check-input" type="checkbox" id="toggleWrapFilename" v-model="wrapFilename">
+						<label class="form-check-label small text-muted" for="toggleWrapFilename">Wrap filename</label>
+					</div>
 						<button
 							type="button"
 							class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1 refresh-btn"
@@ -202,6 +217,19 @@
 							</svg>
 							<span>Refresh</span>
 							<span v-if="isLoadingList" class="spinner-border spinner-border-sm ms-1" role="status" aria-hidden="true"></span>
+						</button>
+						<button
+							v-if="checkedCount > 0"
+							type="button"
+							class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1"
+							@click="deleteCheckedEntries"
+							:title="'Delete ' + checkedCount + ' selected'"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+								<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+							</svg>
+							<span>Delete [[ checkedCount ]]</span>
 						</button>
 						<button
 							type="button"
@@ -218,36 +246,45 @@
 				</div>
 				</div>
 				<div class="list-group list-group-flush file-list-body" ref="listBody">
-					<button
-						type="button"
-						class="list-group-item list-group-item-action d-flex align-items-center"
-						:class="{'active': idx === selectedIndex}"
-						v-for="(e, idx) in visibleEntries"
-						:key="e.name"
-						@click="onRowClick(idx)"
-						@dblclick="openSelected(idx)"
-					>
-						<div class="flex-grow-1 text-truncate">
-							<div class="d-flex align-items-center gap-2">
-								<span class="badge" :class="e.is_dir ? 'text-bg-success' : (e.is_image ? 'text-bg-warning' : (e.is_video ? 'text-bg-info' : 'text-bg-secondary'))">
-									[[ e.is_dir ? 'DIR' : (e.is_image ? 'IMG' : (e.is_video ? 'VID' : 'FILE')) ]]
-								</span>
-								<img 
-									v-if="showThumbnails && e.is_image && !e.is_dir" 
-									:src="buildThumbnailUrl(e)"
-									:alt="e.name"
-									class="file-thumbnail"
-									:style="{ width: thumbnailSize + 'px', height: thumbnailSize + 'px' }"
-									@error="handleThumbnailError"
-									loading="lazy"
-								/>
-								<span class="text-break text-truncate filename-selectable">[[ e.name ]]</span>
-								<span v-if="showModifiedTimes" class="small text-truncate text-muted" :class="{'text-white': idx === selectedIndex}">
-									[[ formatMtime(e) || '—' ]]
-								</span>
-							</div>
+				<button
+					type="button"
+					class="list-group-item list-group-item-action d-flex"
+					:class="[{'active': idx === selectedIndex}, wrapFilename ? 'align-items-start' : 'align-items-center']"
+					v-for="(e, idx) in visibleEntries"
+					:key="e.name"
+					@click="onRowClick(idx, $event)"
+					@dblclick="openSelected(idx)"
+				>
+					<div class="form-check me-2 row-check flex-shrink-0" @click.stop>
+						<input
+							class="form-check-input"
+							type="checkbox"
+							:checked="isChecked(e)"
+							@click.stop="onCheckboxClick(e, idx, $event)"
+							:aria-label="'Select ' + e.name"
+						/>
+					</div>
+					<div class="flex-grow-1" :class="wrapFilename ? '' : 'text-truncate'">
+						<div class="d-flex gap-2" :class="wrapFilename ? 'align-items-start flex-wrap' : 'align-items-center'">
+							<span class="badge flex-shrink-0" :class="e.is_dir ? 'text-bg-success' : (e.is_image ? 'text-bg-warning' : (e.is_video ? 'text-bg-info' : 'text-bg-secondary'))">
+								[[ e.is_dir ? 'DIR' : (e.is_image ? 'IMG' : (e.is_video ? 'VID' : 'FILE')) ]]
+							</span>
+							<img 
+								v-if="showThumbnails && e.is_image && !e.is_dir" 
+								:src="buildThumbnailUrl(e)"
+								:alt="e.name"
+								class="file-thumbnail flex-shrink-0"
+								:style="{ width: thumbnailSize + 'px', height: thumbnailSize + 'px' }"
+								@error="handleThumbnailError"
+								loading="lazy"
+							/>
+							<span class="filename-selectable" :class="wrapFilename ? 'text-break' : 'text-break text-truncate'">[[ e.name ]]</span>
+							<span v-if="showModifiedTimes" class="small text-muted" :class="[{'text-white': idx === selectedIndex}, wrapFilename ? '' : 'text-truncate']">
+								[[ formatMtime(e) || '—' ]]
+							</span>
 						</div>
-						<div class="entry-meta d-flex align-items-center justify-content-end gap-2" style="width: 150px;">
+					</div>
+						<div class="entry-meta d-flex align-items-center justify-content-end gap-2" style="width: 185px;">
 							<div class="text-end entry-size">
 								<span v-text="e.is_dir ? '-' : humanSize(e.size)"></span>
 							</div>
@@ -263,6 +300,19 @@
 								<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
 									<path d="M10 1.5a.5.5 0 0 1 .5-.5h3A1.5 1.5 0 0 1 15 2.5v9a1.5 1.5 0 0 1-1.5 1.5H13v-1h.5a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5V3h-1V1.5z"/>
 									<path d="M3.5 4A1.5 1.5 0 0 0 2 5.5v7A1.5 1.5 0 0 0 3.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 10.5 4zm0-1h7A2.5 2.5 0 0 1 13 5.5v7A2.5 2.5 0 0 1 10.5 15h-7A2.5 2.5 0 0 1 1 12.5v-7A2.5 2.5 0 0 1 3.5 3"/>
+								</svg>
+							</span>
+							<span
+								role="button"
+								tabindex="-1"
+								class="delete-entry-icon"
+								title="Delete"
+								@click.stop="deleteEntry(e)"
+								aria-label="Delete"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+									<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+									<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
 								</svg>
 							</span>
 						</div>
@@ -325,6 +375,19 @@
 							<span>Download</span>
 						</button>
 						<button
+							v-if="selectedEntry"
+							type="button"
+							class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1"
+							@click="deleteEntry(selectedEntry)"
+							:title="'Delete ' + (selectedEntry ? selectedEntry.name : '')"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+								<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+							</svg>
+							<span>Delete</span>
+						</button>
+						<button
 							v-if="associatedScriptUrl"
 							type="button"
 							class="btn btn-outline-secondary btn-sm"
@@ -349,6 +412,8 @@
 							ref="previewVideoElement"
 							:src="previewVideoUrl"
 							controls
+							preload="metadata"
+							playsinline
 							class="preview-video-element"
 							@loadedmetadata="onPreviewVideoLoad"
 							@error="onPreviewVideoError"
@@ -422,6 +487,60 @@
 				if (!term) return entries.value;
 				return entries.value.filter(e => e.name.toLowerCase().includes(term));
 			});
+			// Multi-selection by entry name (scoped to currentPath; cleared on navigation)
+			const checkedNames = ref(new Set());
+			let lastCheckedIndex = -1;
+			const checkedCount = computed(() => checkedNames.value.size);
+			const allVisibleChecked = computed(() => {
+				const list = visibleEntries.value;
+				if (list.length === 0) return false;
+				return list.every(e => checkedNames.value.has(e.name));
+			});
+			const someVisibleChecked = computed(() => {
+				return visibleEntries.value.some(e => checkedNames.value.has(e.name));
+			});
+			function isChecked(entry) {
+				return entry ? checkedNames.value.has(entry.name) : false;
+			}
+			function setChecked(entry, value) {
+				const next = new Set(checkedNames.value);
+				if (value) next.add(entry.name);
+				else next.delete(entry.name);
+				checkedNames.value = next;
+			}
+			function onCheckboxClick(entry, idx, event) {
+				const willCheck = !checkedNames.value.has(entry.name);
+				if (event && event.shiftKey && lastCheckedIndex >= 0 && lastCheckedIndex !== idx) {
+					const list = visibleEntries.value;
+					const lo = Math.min(lastCheckedIndex, idx);
+					const hi = Math.max(lastCheckedIndex, idx);
+					const next = new Set(checkedNames.value);
+					for (let i = lo; i <= hi; i++) {
+						if (willCheck) next.add(list[i].name);
+						else next.delete(list[i].name);
+					}
+					checkedNames.value = next;
+				} else {
+					setChecked(entry, willCheck);
+				}
+				lastCheckedIndex = idx;
+			}
+			function toggleAllVisible() {
+				const list = visibleEntries.value;
+				if (list.length === 0) return;
+				const next = new Set(checkedNames.value);
+				if (allVisibleChecked.value) {
+					list.forEach(e => next.delete(e.name));
+				} else {
+					list.forEach(e => next.add(e.name));
+				}
+				checkedNames.value = next;
+				lastCheckedIndex = -1;
+			}
+			function clearChecked() {
+				if (checkedNames.value.size > 0) checkedNames.value = new Set();
+				lastCheckedIndex = -1;
+			}
 			function getTotalItems() {
 				return entries.value.length;
 			}
@@ -503,6 +622,11 @@
 				previewMode.value = 'none';
 				previewImageUrl.value = '';
 				previewVideoUrl.value = '';
+				previewVideoApiUrl.value = '';
+				if (previewVideoBlobUrl.value) {
+					URL.revokeObjectURL(previewVideoBlobUrl.value);
+					previewVideoBlobUrl.value = '';
+				}
 				previewImageDims.value = { width: null, height: null };
 				previewText.value = '';
 				previewTextLanguage.value = '';
@@ -543,6 +667,8 @@
 			const preSearchSelectedIndex = ref(0); // Track selected index before search starts
 			const previewImageUrl = ref('');
 			const previewVideoUrl = ref('');
+			const previewVideoApiUrl = ref('');  // /api/file URL for blob fallback
+			const previewVideoBlobUrl = ref(''); // revoke on cleanup
 			const previewMode = ref('none');
 			const previewImageDims = ref({ width: null, height: null });
 			const previewLoading = ref(false);
@@ -594,6 +720,7 @@
 			const showModifiedTimes = ref(false);
 			const showThumbnails = ref(false);
 			const thumbnailSize = ref(32);
+			const wrapFilename = ref(false);
 			const showPreviewMtime = ref(false);
 			const previewImageDimensionsText = computed(() => {
 				const dims = previewImageDims.value || {};
@@ -672,8 +799,9 @@
 			}
 
 			function loadList(path = '', options = {}) {
-				const { preserveSearch = false, preserveSelection = false, focusEntryName = null } = options;
+				const { preserveSearch = false, preserveSelection = false, focusEntryName = null, preserveChecked = false } = options;
 				const previousSelectionName = preserveSelection && selectedEntry.value ? selectedEntry.value.name : null;
+				if (!preserveChecked) clearChecked();
 				isLoadingList.value = true;
 				const params = new URLSearchParams();
 				params.set('root', selectedRoot.value || '');
@@ -808,14 +936,23 @@
 				scrollSelectedIntoView();
 			}
 			
-			function onRowClick(idx) {
+			function onRowClick(idx, event) {
 				// Only prevent row selection if user has actually selected text (dragged to highlight)
 				// This allows text selection/copying without changing row selection
 				const selection = window.getSelection();
 				if (selection && selection.toString().trim().length > 0) {
 					return; // User is selecting text, don't change row selection
 				}
-				
+
+				// Ctrl/Cmd-click toggles the row's checkbox without opening it; Shift extends a range.
+				if (event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+					if (idx >= 0 && idx < visibleEntries.value.length) {
+						onCheckboxClick(visibleEntries.value[idx], idx, event);
+						setSelected(idx);
+					}
+					return;
+				}
+
 				// Allow clicking anywhere on the row to select it
 				setSelected(idx);
 				if (idx >= 0 && idx < visibleEntries.value.length) {
@@ -843,13 +980,17 @@
 			}
 			function refreshList() {
 				const targetPath = currentPath.value || '';
-				return loadList(targetPath, { preserveSearch: true, preserveSelection: true });
+				return loadList(targetPath, { preserveSearch: true, preserveSelection: true, preserveChecked: true });
 			}
 
-			function buildFileUrl(path) {
+			function buildFileUrl(path, options) {
 				const params = new URLSearchParams();
 				params.set('root', selectedRoot.value || '');
 				params.set('path', path);
+				// Add cache-busting for image/video preview so we always show latest file content
+				if (options?.cacheBust) {
+					params.set('_t', String(Date.now()));
+				}
 				return '/api/file?' + params.toString();
 			}
 
@@ -869,10 +1010,13 @@
 				}
 			}
 
-			function buildDownloadUrl(path) {
+			function buildDownloadUrl(path, options) {
 				const params = new URLSearchParams();
 				params.set('root', selectedRoot.value || '');
 				params.set('path', path);
+				if (options?.cacheBust) {
+					params.set('_t', String(Date.now()));
+				}
 				return '/api/download?' + params.toString();
 			}
 
@@ -894,6 +1038,87 @@
 				document.body.appendChild(link);
 				link.click();
 				document.body.removeChild(link);
+			}
+
+			function deleteCheckedEntries() {
+				const names = Array.from(checkedNames.value);
+				if (names.length === 0) return;
+				const targets = entries.value.filter(e => checkedNames.value.has(e.name));
+				if (targets.length === 0) return;
+				const paths = targets.map(e => getEntryFullPath(e));
+				const previewLines = paths.slice(0, 10).map(p => '  ' + p);
+				if (paths.length > 10) previewLines.push('  …and ' + (paths.length - 10) + ' more');
+				const msg = 'Permanently delete ' + paths.length + ' item' + (paths.length === 1 ? '' : 's') + '?\n\n' + previewLines.join('\n');
+				if (!confirm(msg)) return;
+				return fetch('/api/delete', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						root: selectedRoot.value || '',
+						paths: paths
+					})
+				})
+					.then(r => {
+						if (!r.ok) {
+							return r.json().catch(() => ({})).then(body => {
+								const desc = (body && body.description) || r.statusText || ('HTTP ' + r.status);
+								throw new Error(desc);
+							});
+						}
+						return r.json();
+					})
+					.then(body => {
+						const failed = (body && body.results || []).filter(x => !x.ok);
+						if (failed.length) {
+							const summary = failed.slice(0, 5).map(f => '• ' + f.path + ': ' + f.error).join('\n');
+							alert('Some items could not be deleted (' + failed.length + '):\n' + summary);
+						}
+						clearChecked();
+						return loadList(currentPath.value, { preserveSearch: true });
+					})
+					.catch(err => {
+						alert('Delete failed: ' + err.message);
+					});
+			}
+
+			function deleteEntry(entry) {
+				if (!entry) return;
+				const fullPath = getEntryFullPath(entry);
+				const kind = entry.is_dir ? 'folder (and all its contents)' : 'file';
+				if (!confirm('Permanently delete this ' + kind + '?\n\n' + fullPath)) {
+					return;
+				}
+				return fetch('/api/delete', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						root: selectedRoot.value || '',
+						path: fullPath
+					})
+				})
+					.then(r => {
+						if (!r.ok) {
+							return r.json().catch(() => ({})).then(body => {
+								const msg = (body && body.description) || r.statusText || ('HTTP ' + r.status);
+								throw new Error(msg);
+							});
+						}
+						return r.json().catch(() => ({}));
+					})
+					.then(() => {
+						// Pick a sensible neighbor to focus after the row disappears
+						const removedName = entry.name;
+						const visIdx = visibleEntries.value.findIndex(e => e.name === removedName);
+						let focusName = null;
+						if (visIdx >= 0) {
+							const next = visibleEntries.value[visIdx + 1] || visibleEntries.value[visIdx - 1];
+							if (next) focusName = next.name;
+						}
+						return loadList(currentPath.value, { preserveSearch: true, focusEntryName: focusName, preserveChecked: true });
+					})
+					.catch(err => {
+						alert('Delete failed: ' + err.message);
+					});
 			}
 
 			function getEntryFullPath(entry) {
@@ -1003,7 +1228,7 @@
 				if (item.is_image) {
 					previewMode.value = 'image';
 					previewImageDims.value = { width: null, height: null };
-					const nextUrl = buildFileUrl(fullPath);
+					const nextUrl = buildFileUrl(fullPath, { cacheBust: true });
 					previewImageUrl.value = nextUrl;
 					previewVideoUrl.value = '';
 					if (fullPath !== lastPreviewPath) {
@@ -1017,17 +1242,24 @@
 					disposeThreeScene();
 					return;
 				}
-				if (item.is_video) {
-					previewMode.value = 'video';
-					previewImageDims.value = { width: null, height: null };
-					const nextUrl = buildFileUrl(fullPath);
-					previewVideoUrl.value = nextUrl;
-					previewImageUrl.value = '';
-					previewLoading.value = false;
-					previewError.value = '';
-					disposeThreeScene();
-					return;
+			if (item.is_video) {
+				previewMode.value = 'video';
+				previewImageDims.value = { width: null, height: null };
+				previewImageUrl.value = '';
+				previewLoading.value = true;
+				previewError.value = '';
+				disposeThreeScene();
+				// Use /api/file directly: server supports range requests so the browser can stream
+				const apiUrl = buildFileUrl(fullPath, { cacheBust: true });
+				previewVideoApiUrl.value = apiUrl;
+				if (previewVideoBlobUrl.value) {
+					URL.revokeObjectURL(previewVideoBlobUrl.value);
+					previewVideoBlobUrl.value = '';
 				}
+				previewVideoUrl.value = apiUrl;
+				previewLoading.value = false;
+				return;
+			}
 				previewImageUrl.value = '';
 				previewVideoUrl.value = '';
 				lastPreviewPath = '';
@@ -1082,9 +1314,38 @@
 				// Video metadata loaded successfully
 				previewError.value = '';
 			}
-			function onPreviewVideoError(event) {
-				previewError.value = 'Failed to load video. The file may be corrupted or in an unsupported format.';
+		function onPreviewVideoError(event) {
+			// Streaming failed — fall back to downloading the full file as a blob
+			if (previewVideoUrl.value && previewVideoUrl.value.startsWith('blob:')) {
+				previewError.value = 'This video cannot be played in the browser. It may use an unsupported codec (e.g. HEVC/H.265). Use the Download button to play it in VLC, MPV, or another desktop player.';
+				return;
 			}
+			const apiUrl = previewVideoApiUrl.value;
+			if (!apiUrl) {
+				previewError.value = 'This video cannot be played in the browser. It may use an unsupported codec (e.g. HEVC/H.265). Use the Download button to play it in VLC, MPV, or another desktop player.';
+				return;
+			}
+			previewError.value = 'Loading video…';
+			fetch(apiUrl)
+				.then(function(r) {
+					if (!r.ok) throw new Error(r.statusText);
+					const mime = r.headers.get('Content-Type') || 'video/mp4';
+					const type = mime.split(';')[0].trim();
+					return r.arrayBuffer().then(function(buf) {
+						return new Blob([buf], { type: type || 'video/mp4' });
+					});
+				})
+				.then(function(blob) {
+					if (previewVideoBlobUrl.value) URL.revokeObjectURL(previewVideoBlobUrl.value);
+					const blobUrl = URL.createObjectURL(blob);
+					previewVideoBlobUrl.value = blobUrl;
+					previewVideoUrl.value = blobUrl;
+					previewError.value = '';
+				})
+				.catch(function() {
+					previewError.value = 'This video cannot be played in the browser. It may use an unsupported codec (e.g. HEVC/H.265). Use the Download button to play it in VLC, MPV, or another desktop player.';
+				});
+		}
 			function load3DPreview(fullPath, token) {
 				if (typeof window === 'undefined' || typeof window.THREE === 'undefined') {
 					previewLoading.value = false;
@@ -2284,6 +2545,7 @@
 				showModifiedTimes,
 				showThumbnails,
 				thumbnailSize,
+				wrapFilename,
 				showPreviewMtime,
 				formatMtime,
 				buildThumbnailUrl,
@@ -2308,7 +2570,16 @@
 				refreshList,
 				associatedScriptUrl,
 				openAssociatedScript,
-				downloadFile
+				downloadFile,
+				deleteEntry,
+				// multi-select
+				checkedCount,
+				allVisibleChecked,
+				someVisibleChecked,
+				isChecked,
+				onCheckboxClick,
+				toggleAllVisible,
+				deleteCheckedEntries
 			};
 		}
 	});
