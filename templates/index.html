@@ -161,7 +161,7 @@
 						</small>
 					</div>
 					<div class="d-flex align-items-center">
-						<div class="form-check me-2 row-check flex-shrink-0" :title="visibleEntries.length ? 'Select all visible' : ''">
+						<div v-if="selectionMode" class="form-check me-2 row-check flex-shrink-0" :title="visibleEntries.length ? 'Select all visible' : ''">
 							<input
 								class="form-check-input"
 								type="checkbox"
@@ -219,7 +219,20 @@
 							<span v-if="isLoadingList" class="spinner-border spinner-border-sm ms-1" role="status" aria-hidden="true"></span>
 						</button>
 						<button
-							v-if="checkedCount > 0"
+							type="button"
+							class="btn btn-sm d-flex align-items-center gap-1"
+							:class="selectionMode ? 'btn-secondary' : 'btn-outline-secondary'"
+							@click="toggleSelectionMode"
+							:title="selectionMode ? 'Exit selection mode' : 'Select multiple files/folders'"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M2.5 3A1.5 1.5 0 0 0 1 4.5v7A1.5 1.5 0 0 0 2.5 13h11a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 13.5 3h-11zm0 1h11a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-7a.5.5 0 0 1 .5-.5z"/>
+								<path d="M10.97 6.97a.75.75 0 0 1 1.07 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 9.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.236.236 0 0 1 .02-.022z"/>
+							</svg>
+							<span>[[ selectionMode ? 'Cancel' : 'Select' ]]</span>
+						</button>
+						<button
+							v-if="selectionMode && checkedCount > 0"
 							type="button"
 							class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1"
 							@click="deleteCheckedEntries"
@@ -255,7 +268,7 @@
 					@click="onRowClick(idx, $event)"
 					@dblclick="openSelected(idx)"
 				>
-					<div class="form-check me-2 row-check flex-shrink-0" @click.stop>
+					<div v-if="selectionMode" class="form-check me-2 row-check flex-shrink-0" @click.stop>
 						<input
 							class="form-check-input"
 							type="checkbox"
@@ -488,8 +501,13 @@
 				return entries.value.filter(e => e.name.toLowerCase().includes(term));
 			});
 			// Multi-selection by entry name (scoped to currentPath; cleared on navigation)
+			const selectionMode = ref(false);
 			const checkedNames = ref(new Set());
 			let lastCheckedIndex = -1;
+			function toggleSelectionMode() {
+				selectionMode.value = !selectionMode.value;
+				if (!selectionMode.value) clearChecked();
+			}
 			const checkedCount = computed(() => checkedNames.value.size);
 			const allVisibleChecked = computed(() => {
 				const list = visibleEntries.value;
@@ -944,8 +962,8 @@
 					return; // User is selecting text, don't change row selection
 				}
 
-				// Ctrl/Cmd-click toggles the row's checkbox without opening it; Shift extends a range.
-				if (event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+				// In selection mode, a plain row click toggles its checkbox instead of opening dirs.
+				if (selectionMode.value) {
 					if (idx >= 0 && idx < visibleEntries.value.length) {
 						onCheckboxClick(visibleEntries.value[idx], idx, event);
 						setSelected(idx);
@@ -2330,6 +2348,12 @@
 				if (isEditableTarget) {
 					return;
 				}
+				// Backspace navigates up regardless of whether the listing has rows.
+				if (e.key === 'Backspace') {
+					e.preventDefault();
+					goUp();
+					return;
+				}
 				if (visibleEntries.value.length === 0) return;
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
@@ -2342,9 +2366,6 @@
 				} else if (e.key === 'Enter') {
 					e.preventDefault();
 					openSelected();
-				} else if (e.key === 'Backspace') {
-					e.preventDefault();
-					goUp();
 				} else if (e.key.toLowerCase() === 'i') {
 					e.preventDefault();
 					updatePreview();
@@ -2573,6 +2594,8 @@
 				downloadFile,
 				deleteEntry,
 				// multi-select
+				selectionMode,
+				toggleSelectionMode,
 				checkedCount,
 				allVisibleChecked,
 				someVisibleChecked,
