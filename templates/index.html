@@ -953,7 +953,25 @@
 				updatePreview();
 				scrollSelectedIntoView();
 			}
-			
+
+			function stepToAdjacentImage(direction) {
+				const list = visibleEntries.value;
+				if (!list.length) return;
+				const start = selectedIndex.value;
+				const n = list.length;
+				const step = direction >= 0 ? 1 : -1;
+				// Walk forward/backward looking for the next image entry; stop after one full pass.
+				for (let i = 1; i <= n; i++) {
+					const idx = ((start + step * i) % n + n) % n;
+					const item = list[idx];
+					if (item && item.is_image && !item.is_dir) {
+						setSelected(idx);
+						return;
+					}
+				}
+			}
+
+
 			function onRowClick(idx, event) {
 				// Only prevent row selection if user has actually selected text (dragged to highlight)
 				// This allows text selection/copying without changing row selection
@@ -2352,6 +2370,12 @@
 				if (e.key === 'Backspace') {
 					e.preventDefault();
 					goUp();
+					return;
+				}
+				// While previewing an image, Left/Right cycle to the prev/next image in the listing.
+				if (previewMode.value === 'image' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+					e.preventDefault();
+					stepToAdjacentImage(e.key === 'ArrowRight' ? 1 : -1);
 					return;
 				}
 				if (visibleEntries.value.length === 0) return;
