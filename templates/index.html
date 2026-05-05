@@ -416,6 +416,8 @@
 							:src="previewImageUrl"
 							alt="Preview"
 							:style="imageStyle"
+							draggable="true"
+							@dragstart="onPreviewImageDragStart"
 							@load="onPreviewImageLoad"
 							@error="onPreviewImageError"
 						/>
@@ -1345,6 +1347,33 @@
 			}
 			function onPreviewImageError() {
 				previewImageDims.value = { width: null, height: null };
+			}
+			function onPreviewImageDragStart(event) {
+				// If the user is mid-pan (only happens when zoomed), don't start a drag.
+				if (isPanning.value) {
+					event.preventDefault();
+					return;
+				}
+				const dt = event.dataTransfer;
+				if (!dt) return;
+				const img = event.target;
+				const src = img && img.src ? img.src : previewImageUrl.value;
+				if (!src) return;
+				// Resolve to absolute URL so destinations (Slides, Docs, desktop) can fetch it.
+				let absUrl = src;
+				try { absUrl = new URL(src, window.location.href).href; } catch (e) { /* keep as-is */ }
+				const name = (selectedEntry.value && selectedEntry.value.name) || 'image';
+				const mime = (selectedEntry.value && selectedEntry.value.mime) || 'image/jpeg';
+				try {
+					dt.effectAllowed = 'copy';
+					dt.setData('text/uri-list', absUrl);
+					dt.setData('text/plain', absUrl);
+					dt.setData('text/html', '<img src="' + absUrl + '" alt="' + name.replace(/"/g, '&quot;') + '"/>');
+					// Chromium-only: enables drag-to-desktop with the original filename + MIME.
+					try { dt.setData('DownloadURL', mime + ':' + name + ':' + absUrl); } catch (e) { /* not supported */ }
+				} catch (e) {
+					// dataTransfer API rejected something — let the native drag continue with defaults.
+				}
 			}
 			function onPreviewVideoLoad(event) {
 				// Video metadata loaded successfully
@@ -2579,6 +2608,7 @@
 				previewImageDimensionsText,
 				onPreviewImageLoad,
 				onPreviewImageError,
+				onPreviewImageDragStart,
 				previewVideoUrl,
 				previewVideoElement,
 				onPreviewVideoLoad,

@@ -93,8 +93,12 @@
 	transform-origin: center center;
 	transition: transform 0.15s ease-out;
 	user-select: none;
-	-webkit-user-drag: none;
+	-webkit-user-drag: auto;
 	pointer-events: auto;
+	cursor: grab;
+}
+.preview-canvas img:active {
+	cursor: grabbing;
 }
 .preview-video {
 	flex: 1;
