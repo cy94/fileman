@@ -101,8 +101,19 @@
 						:title="showRootControls ? 'Hide root selector' : 'Change root'"
 					>Root [[ showRootControls ? '▾' : '▸' ]]</button>
 				</div>
-				<div class="col d-flex align-items-center" style="min-width: 0;">
-					<small class="text-muted d-flex align-items-center" style="min-width: 0;">
+				<div class="col d-flex align-items-center gap-2" style="min-width: 0;">
+					<div class="input-group input-group-sm" style="max-width: 520px;">
+						<input
+							type="text"
+							class="form-control"
+							placeholder="Go to a file or folder path…"
+							v-model="gotoPathInput"
+							@keyup.enter="goToPath"
+							:title="'Paste an absolute path. If it is a file, the folder opens and the file is selected.'"
+						>
+						<button class="btn btn-primary" type="button" @click="goToPath" :disabled="!gotoPathInput.trim()">Go</button>
+					</div>
+					<small class="text-muted d-flex align-items-center text-truncate" style="min-width: 0;">
 						<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" class="me-1 flex-shrink-0" aria-hidden="true">
 							<path d="M.5 3l.04.87a1.99 1.99 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9.81a2 2 0 0 0 1.991-1.819l.637-7a1.99 1.99 0 0 0-.342-1.311L12.5 3H.5zm.369 1L2 4.5v6.369A1 1 0 0 0 2.826 12h6.988A1 1 0 0 0 11 10.869V4.5L12.131 4H.869z"/>
 						</svg>
@@ -553,6 +564,7 @@
 			const leftPanelWidthPx = ref(520);
 			const isDragging = ref(false);
 			const showRootControls = ref(false);
+			const gotoPathInput = ref('');
 			const embedMode = ref(false);
 			const splitFileUrl = ref('');
 			const splitFileLabel = ref('');
@@ -1001,7 +1013,40 @@
 			}
 
 			function goToPath() {
-				return loadList(currentPath.value);
+				const raw = (gotoPathInput.value || '').trim();
+				if (!raw) return;
+				if (!raw.startsWith('/')) {
+					alert('Please paste an absolute path (starting with /).');
+					return;
+				}
+				// Strip trailing slash unless it's the root itself.
+				const target = raw.length > 1 && raw.endsWith('/') ? raw.slice(0, -1) : raw;
+				// Pick a root that contains the target. Prefer the longest match among
+				// allowedRoots/selectedRoot; fall back to '/' so the server check passes.
+				const candidates = Array.from(new Set(
+					[selectedRoot.value, ...(allowedRoots.value || [])].filter(Boolean)
+				)).sort((a, b) => b.length - a.length);
+				let chosenRoot = candidates.find(r => target === r || target.startsWith(r.endsWith('/') ? r : r + '/')) || '/';
+				if (chosenRoot !== selectedRoot.value) {
+					selectedRoot.value = chosenRoot;
+					if (!allowedRoots.value.includes(chosenRoot)) {
+						allowedRoots.value = [...allowedRoots.value, chosenRoot];
+					}
+					rootPathInput.value = chosenRoot;
+				}
+				// Treat path as a file if its last segment contains a dot, else as a dir.
+				const isFile = looksLikeFilePath(target);
+				const promise = isFile
+					? (() => {
+						const lastSlash = target.lastIndexOf('/');
+						const parent = lastSlash > 0 ? target.slice(0, lastSlash) : '/';
+						const name = target.slice(lastSlash + 1);
+						return loadList(parent, { focusEntryName: name });
+					})()
+					: loadList(target);
+				return Promise.resolve(promise).then(() => {
+					gotoPathInput.value = '';
+				});
 			}
 
 			function goUp() {
@@ -2825,6 +2870,7 @@
 				selectedRoot,
 				rootPathInput,
 				showRootControls,
+				gotoPathInput,
 				leftPanelWidthPx,
 				searchTerm,
 				visibleEntries,
