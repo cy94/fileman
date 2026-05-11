@@ -86,31 +86,40 @@
 	</script>
 </head>
 <body class="bg-body">
-	<div id="app" class="container-fluid py-3">
-		<div class="bg-light border rounded-3 p-3 mb-3">
-			<form class="row g-2 align-items-center">
+	<div id="app" class="container-fluid" :class="embedMode ? 'py-1' : 'py-3'">
+		<div v-if="!embedMode" class="bg-light border rounded-3 px-3 py-2 mb-2">
+			<form class="row g-2 align-items-center" @submit.prevent>
 				<div class="col-auto">
-					<button type="button" class="btn btn-outline-secondary" @click="goUp" :disabled="!parentPath">Up</button>
+					<button type="button" class="btn btn-outline-secondary btn-sm" @click="goUp" :disabled="!parentPath">Up</button>
 				</div>
 				<div class="col-auto">
-					<label class="col-form-label" for="rootSelect">Root</label>
+					<button
+						type="button"
+						class="btn btn-sm"
+						:class="showRootControls ? 'btn-secondary' : 'btn-outline-secondary'"
+						@click="showRootControls = !showRootControls"
+						:title="showRootControls ? 'Hide root selector' : 'Change root'"
+					>Root [[ showRootControls ? '▾' : '▸' ]]</button>
 				</div>
-				<div class="col-md-4">
-					<select id="rootSelect" class="form-select" v-model="selectedRoot" @change="onRootChange">
+				<div class="col d-flex align-items-center" style="min-width: 0;">
+					<small class="text-muted d-flex align-items-center" style="min-width: 0;">
+						<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" class="me-1 flex-shrink-0" aria-hidden="true">
+							<path d="M.5 3l.04.87a1.99 1.99 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9.81a2 2 0 0 0 1.991-1.819l.637-7a1.99 1.99 0 0 0-.342-1.311L12.5 3H.5zm.369 1L2 4.5v6.369A1 1 0 0 0 2.826 12h6.988A1 1 0 0 0 11 10.869V4.5L12.131 4H.869z"/>
+						</svg>
+						<span class="text-truncate" :title="currentPath">[[ currentPath || 'Loading...' ]]</span>
+					</small>
+				</div>
+				<div v-if="showRootControls" class="col-12 d-flex flex-wrap gap-2 align-items-center mt-1">
+					<select class="form-select form-select-sm" style="max-width: 320px;" v-model="selectedRoot" @change="onRootChange">
 						<option v-for="r in allowedRoots" :key="r" :value="r">[[ r ]]</option>
 					</select>
-				</div>
-				<div class="col d-flex">
-					<div class="input-group">
+					<div class="input-group input-group-sm flex-grow-1" style="min-width: 240px;">
 						<input type="text" class="form-control" placeholder="Paste an absolute root path" v-model="rootPathInput" @keyup.enter="applyRootInput">
 						<button class="btn btn-outline-secondary" type="button" @click="openBrowse">Browse</button>
 						<button class="btn btn-primary" type="button" @click="applyRootInput">Go</button>
 					</div>
 				</div>
 			</form>
-			<small class="text-muted d-block mt-2">
-				Keyboard: Up/Down to select, Enter to open, Backspace to go up, i to preview image
-			</small>
 		</div>
 		<!-- Browse Root Modal -->
 		<div class="modal fade" id="browseRootModal" tabindex="-1" aria-hidden="true">
@@ -149,17 +158,9 @@
 			</div>
 		</div>
 
-		<div class="viewer-panels d-flex align-items-stretch" tabindex="0" data-fileviewer-focus @keydown="onKeyDown">
-			<div class="resizable-panel card mb-0" :style="{ width: leftPanelWidthPx + 'px' }">
+		<div class="viewer-panels d-flex align-items-stretch" :class="{'embed-mode': embedMode}" tabindex="0" data-fileviewer-focus>
+			<div v-if="!embedMode" class="resizable-panel card mb-0" :style="{ width: leftPanelWidthPx + 'px' }">
 				<div class="card-header">
-					<div class="mb-2 pb-2 border-bottom">
-						<small class="text-muted d-flex align-items-center">
-							<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" class="me-1" aria-hidden="true">
-								<path d="M.5 3l.04.87a1.99 1.99 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9.81a2 2 0 0 0 1.991-1.819l.637-7a1.99 1.99 0 0 0-.342-1.311L12.5 3H.5zm.369 1L2 4.5v6.369A1 1 0 0 0 2.826 12h6.988A1 1 0 0 0 11 10.869V4.5L12.131 4H.869z"/>
-							</svg>
-							<span class="text-truncate" :title="currentPath">[[ currentPath || 'Loading...' ]]</span>
-						</small>
-					</div>
 					<div class="d-flex align-items-center">
 						<div v-if="selectionMode" class="form-check me-2 row-check flex-shrink-0" :title="visibleEntries.length ? 'Select all visible' : ''">
 							<input
@@ -297,7 +298,7 @@
 							</span>
 						</div>
 					</div>
-						<div class="entry-meta d-flex align-items-center justify-content-end gap-2" style="width: 185px;">
+						<div class="entry-meta d-flex align-items-center justify-content-end gap-2" style="width: 220px;">
 							<div class="text-end entry-size">
 								<span v-text="e.is_dir ? '-' : humanSize(e.size)"></span>
 							</div>
@@ -318,6 +319,19 @@
 							<span
 								role="button"
 								tabindex="-1"
+								class="open-tab-icon"
+								title="Open in new tab"
+								@click.stop="openEntryInNewTab(e)"
+								aria-label="Open in new tab"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+									<path d="M1.5 3a.5.5 0 0 0-.5.5V12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8.5a.5.5 0 0 1 1 0V12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3.5A1.5 1.5 0 0 1 1.5 2H6a.5.5 0 0 1 0 1H1.5z"/>
+									<path d="M10 1.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0V2.707L7.354 9.354a.5.5 0 1 1-.708-.708L13.293 2H10.5a.5.5 0 0 1-.5-.5z"/>
+								</svg>
+							</span>
+							<span
+								role="button"
+								tabindex="-1"
 								class="delete-entry-icon"
 								title="Delete"
 								@click.stop="deleteEntry(e)"
@@ -333,16 +347,16 @@
 					<div v-if="visibleEntries.length === 0" class="list-group-item text-muted">No matches</div>
 				</div>
 			</div>
-			<div class="splitter" @mousedown="startDrag"></div>
+			<div v-if="!embedMode" class="splitter" @mousedown="startDrag"></div>
 			<div class="preview-panel card mb-0 flex-grow-1">
 				<div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
-					<div class="d-flex flex-column">
+					<div class="d-flex align-items-center gap-2 flex-wrap" style="min-width: 0;">
 						<span>Preview</span>
-						<span v-if="showPreviewMtime && selectedEntry && !selectedEntry.is_dir" class="text-muted small">
-							Modified: [[ formatMtime(selectedEntry) || '—' ]]
-						</span>
 						<span v-if="previewMode === 'image' && previewImageDimensionsText" class="text-muted small">
 							[[ previewImageDimensionsText ]]
+						</span>
+						<span v-if="showPreviewMtime && selectedEntry && !selectedEntry.is_dir" class="text-muted small">
+							Modified: [[ formatMtime(selectedEntry) || '—' ]]
 						</span>
 					</div>
 					<div class="d-flex align-items-center gap-2 flex-wrap ms-auto">
@@ -370,10 +384,43 @@
 								/>
 								<span class="small text-muted" style="min-width: 3.5rem;">[[ pointSize.toFixed(3) ]]</span>
 							</div>
+							<div class="form-check form-switch m-0">
+								<input class="form-check-input" type="checkbox" id="toggleMeshEdges" v-model="showMeshEdges">
+								<label class="form-check-label small text-muted" for="toggleMeshEdges">Edges</label>
+							</div>
+							<div class="form-check form-switch m-0">
+								<input class="form-check-input" type="checkbox" id="toggleBackfaceCull" v-model="meshBackfaceCulling">
+								<label class="form-check-label small text-muted" for="toggleBackfaceCull" title="Hide back-facing triangles">Backface cull</label>
+							</div>
 						</div>
 						<div v-else class="text-muted small">
 							[[ previewHeaderText ]]
 						</div>
+						<button
+							v-if="!embedMode && selectedEntry && !selectedEntry.is_dir"
+							type="button"
+							class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
+							@click="openInSplit(selectedEntry)"
+							title="Open this file in a side-by-side split pane"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M0 1.5A1.5 1.5 0 0 1 1.5 0h13A1.5 1.5 0 0 1 16 1.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 0 14.5zM1 1.5v13a.5.5 0 0 0 .5.5H7V1H1.5a.5.5 0 0 0-.5.5zM8 15h6.5a.5.5 0 0 0 .5-.5v-13a.5.5 0 0 0-.5-.5H8z"/>
+							</svg>
+							<span>[[ splitFileUrl ? 'Replace split' : 'Split' ]]</span>
+						</button>
+						<button
+							v-if="selectedEntry && !selectedEntry.is_dir"
+							type="button"
+							class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
+							@click="openEntryInNewTab(selectedEntry)"
+							title="Open this file in a new tab (then arrange tabs side by side)"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M1.5 3a.5.5 0 0 0-.5.5V12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8.5a.5.5 0 0 1 1 0V12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3.5A1.5 1.5 0 0 1 1.5 2H6a.5.5 0 0 1 0 1H1.5z"/>
+								<path d="M10 1.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0V2.707L7.354 9.354a.5.5 0 1 1-.708-.708L13.293 2H10.5a.5.5 0 0 1-.5-.5z"/>
+							</svg>
+							<span>Open in tab</span>
+						</button>
 						<button
 							v-if="selectedEntry && !selectedEntry.is_dir"
 							type="button"
@@ -459,6 +506,19 @@
 					[[ previewError ]]
 				</div>
 			</div>
+			<div v-if="!embedMode && splitFileUrl" class="splitter" @mousedown="startSplitDrag"></div>
+			<div v-if="!embedMode && splitFileUrl" class="split-pane card mb-0" :style="{ width: splitPaneWidthPx + 'px', flexShrink: 0 }">
+				<div class="card-header d-flex align-items-center justify-content-between gap-2 py-1">
+					<span class="text-truncate" :title="splitFileLabel">[[ splitFileLabel || 'Split view' ]]</span>
+					<div class="d-flex align-items-center gap-1">
+						<button type="button" class="btn btn-sm btn-outline-secondary" @click="popSplitToTab" title="Open this pane in a new browser tab">↗</button>
+						<button type="button" class="btn-close" @click="closeSplit" aria-label="Close split"></button>
+					</div>
+				</div>
+				<div class="card-body p-0 flex-grow-1" style="overflow: hidden;">
+					<iframe :src="splitFileUrl" class="split-iframe" :class="{'no-pointer': isDragging || isSplitDragging}" referrerpolicy="no-referrer" loading="lazy" title="Split preview"></iframe>
+				</div>
+			</div>
 		</div>
 	</div>
 
@@ -492,6 +552,12 @@
 			const rootPathInput = ref('');
 			const leftPanelWidthPx = ref(520);
 			const isDragging = ref(false);
+			const showRootControls = ref(false);
+			const embedMode = ref(false);
+			const splitFileUrl = ref('');
+			const splitFileLabel = ref('');
+			const splitPaneWidthPx = ref(640);
+			const isSplitDragging = ref(false);
 			const currentPath = ref('');
 			const parentPath = ref(null);
 			const entries = ref([]);
@@ -716,9 +782,9 @@
 				return 'Select a file';
 			});
 			const zoomScale = ref(1);
-			const minZoom = 0.25;
-			const maxZoom = 4;
-			const zoomStep = 0.2;
+			const minZoom = 0.1;
+			const maxZoom = 32;
+			const zoomStep = 0.25;
 			const zoomPercent = computed(() => Math.round(zoomScale.value * 100));
 			const panX = ref(0);
 			const panY = ref(0);
@@ -737,6 +803,8 @@
 			const pointSize = ref(0.01);
 			const minPointSize = 0.001;
 			const maxPointSize = 0.1;
+			const showMeshEdges = ref(true);
+			const meshBackfaceCulling = ref(true);
 			const showModifiedTimes = ref(false);
 			const showThumbnails = ref(false);
 			const thumbnailSize = ref(32);
@@ -765,6 +833,7 @@
 			let threeResizeCleanup = null;
 			let threeCurrentObject = null;
 			let threeAxesHelper = null;
+			let threeEdgesObject = null;
 			const associatedScriptPath = computed(() => {
 				const entry = selectedEntry.value;
 				if (!entry || !entry.name || entry.is_dir) return '';
@@ -1986,16 +2055,22 @@
 								vertexColors: true,
 								roughness: 0.8,
 								metalness: 0.0,
-								side: THREE.DoubleSide
+								side: meshBackfaceCulling.value ? THREE.FrontSide : THREE.DoubleSide
 						  })
 						: new THREE.MeshStandardMaterial({
 								color: 0xcccccc,
 								flatShading: !geometry.getAttribute('normal'),
 								roughness: 0.8,
 								metalness: 0.0,
-								side: THREE.DoubleSide
+								side: meshBackfaceCulling.value ? THREE.FrontSide : THREE.DoubleSide
 						  });
 					object = new THREE.Mesh(geometry, material);
+					// Slight polygon offset so wireframe edges don't z-fight with the surface.
+					if (object.material && 'polygonOffset' in object.material) {
+						object.material.polygonOffset = true;
+						object.material.polygonOffsetFactor = 1;
+						object.material.polygonOffsetUnits = 1;
+					}
 				} else {
 					const material = new THREE.PointsMaterial({
 						size: pointSize.value,
@@ -2006,11 +2081,67 @@
 				}
 				replaceThreeObject(object);
 			}
+			function buildEdgesForMesh(mesh) {
+				if (!mesh || !mesh.geometry || !(mesh instanceof THREE.Mesh)) return null;
+				try {
+					const edgesGeom = new THREE.EdgesGeometry(mesh.geometry, 1);
+					const lines = new THREE.LineSegments(
+						edgesGeom,
+						new THREE.LineBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.55 })
+					);
+					// Match the parent mesh's transforms so edges align.
+					lines.position.copy(mesh.position);
+					lines.rotation.copy(mesh.rotation);
+					lines.scale.copy(mesh.scale);
+					lines.renderOrder = 1;
+					return lines;
+				} catch (e) {
+					console.warn('Failed to build mesh edges overlay:', e);
+					return null;
+				}
+			}
+			function disposeEdgesObject() {
+				if (!threeEdgesObject) return;
+				if (threeScene && threeEdgesObject.parent === threeScene) {
+					threeScene.remove(threeEdgesObject);
+				}
+				if (threeEdgesObject.geometry) threeEdgesObject.geometry.dispose();
+				if (threeEdgesObject.material) threeEdgesObject.material.dispose();
+				threeEdgesObject = null;
+			}
+			function applyBackfaceCullingToObject(root) {
+				if (!root) return;
+				const desiredSide = meshBackfaceCulling.value ? THREE.FrontSide : THREE.DoubleSide;
+				root.traverse((node) => {
+					if (!(node instanceof THREE.Mesh)) return;
+					const mats = Array.isArray(node.material) ? node.material : [node.material];
+					for (const m of mats) {
+						if (!m) continue;
+						if (m.side !== desiredSide) {
+							m.side = desiredSide;
+							m.needsUpdate = true;
+						}
+					}
+				});
+			}
+			function applyBackfaceCulling() {
+				if (!threeCurrentObject) return;
+				applyBackfaceCullingToObject(threeCurrentObject);
+			}
+			function refreshMeshEdgesOverlay() {
+				disposeEdgesObject();
+				if (!threeScene || !threeCurrentObject) return;
+				if (!showMeshEdges.value) return;
+				if (!(threeCurrentObject instanceof THREE.Mesh)) return;
+				threeEdgesObject = buildEdgesForMesh(threeCurrentObject);
+				if (threeEdgesObject) threeScene.add(threeEdgesObject);
+			}
 			function replaceThreeObject(object) {
 				if (!threeScene || !object) return;
 				if (threeCurrentObject) {
 					disposeThreeObject(threeCurrentObject);
 				}
+				disposeEdgesObject();
 				if (threeAxesHelper && threeScene) {
 					threeScene.remove(threeAxesHelper);
 					threeAxesHelper = null;
@@ -2020,6 +2151,8 @@
 				frameThreeObject(object);
 				addAxesHelper(object);
 				applyPointSize();
+				applyBackfaceCulling();
+				refreshMeshEdgesOverlay();
 			}
 			function disposeThreeObject(object) {
 				if (!object) return;
@@ -2216,11 +2349,19 @@
 				// Set very generous near/far planes initially - will be refined when object is loaded
 				threeCamera = new THREE.PerspectiveCamera(60, width / height || 1, 0.001, 100000);
 				threeCamera.position.set(0, 0, 2);
-				const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+				// Soft sky/ground fill so shadowed sides aren't pitch black, but low enough to keep contrast.
+				const hemi = new THREE.HemisphereLight(0xffffff, 0xa0a0a0, 0.55);
+				threeScene.add(hemi);
+				const ambient = new THREE.AmbientLight(0xffffff, 0.1);
 				threeScene.add(ambient);
-				const directional = new THREE.DirectionalLight(0xffffff, 0.8);
-				directional.position.set(5, 5, 5);
-				threeScene.add(directional);
+				// Lights parented to the camera follow the user's view, so the visible side is always lit.
+				threeScene.add(threeCamera);
+				const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+				keyLight.position.set(0.4, 0.6, 1);
+				threeCamera.add(keyLight);
+				const fillLight = new THREE.DirectionalLight(0xffffff, 0.35);
+				fillLight.position.set(-0.7, -0.3, 0.5);
+				threeCamera.add(fillLight);
 				if (THREE.TrackballControls) {
 					threeControls = new THREE.TrackballControls(threeCamera, threeRenderer.domElement);
 					// Disable built-in wheel zoom because we handle wheel zoom ourselves.
@@ -2339,6 +2480,9 @@
 				applyPointSize();
 			}
 
+			watch(showMeshEdges, () => refreshMeshEdgesOverlay());
+			watch(meshBackfaceCulling, () => applyBackfaceCulling());
+
 			function clearSearch() {
 				// Save current selected entry name if valid (file found during search)
 				const currentSelectedIdx = selectedIndex.value;
@@ -2380,7 +2524,8 @@
 					(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') ||
 					(target && target.isContentEditable) ||
 					(target && typeof target.closest === 'function' && target.closest('input, textarea, select, [contenteditable="true"]'));
-				
+				const isButtonTarget = tag === 'BUTTON';
+
 				// Handle Escape key even when in search input
 				if (e.key === 'Escape' && searchTerm.value.trim()) {
 					e.preventDefault();
@@ -2391,8 +2536,12 @@
 					}
 					return;
 				}
-				
+
 				if (isEditableTarget) {
+					return;
+				}
+				// Don't hijack Enter/Space when a button has focus — let it activate the button.
+				if (isButtonTarget && (e.key === 'Enter' || e.key === ' ')) {
 					return;
 				}
 				// Backspace navigates up regardless of whether the listing has rows.
@@ -2475,12 +2624,13 @@
 				return Math.min(maxZoom, Math.max(minZoom, value));
 			}
 
-			function zoomIn(step = zoomStep) {
-				zoomScale.value = clampZoom(parseFloat((zoomScale.value + step).toFixed(2)));
+			// Multiplicative zoom so a fixed number of clicks/wheel-ticks span the full range.
+			function zoomIn(factor = 1 + zoomStep) {
+				zoomScale.value = clampZoom(parseFloat((zoomScale.value * factor).toFixed(3)));
 			}
 
-			function zoomOut(step = zoomStep) {
-				zoomScale.value = clampZoom(parseFloat((zoomScale.value - step).toFixed(2)));
+			function zoomOut(factor = 1 + zoomStep) {
+				zoomScale.value = clampZoom(parseFloat((zoomScale.value / factor).toFixed(3)));
 			}
 
 			function resetZoom() {
@@ -2493,10 +2643,12 @@
 				event.preventDefault();
 				event.stopPropagation();
 				const delta = event.deltaY || 0;
+				// Finer wheel step than button clicks; Ctrl/Shift makes it coarser.
+				const wheelFactor = event.ctrlKey || event.shiftKey ? 1 + zoomStep : 1 + zoomStep / 2;
 				if (delta < 0) {
-					zoomIn(zoomStep / 2);
+					zoomIn(wheelFactor);
 				} else if (delta > 0) {
-					zoomOut(zoomStep / 2);
+					zoomOut(wheelFactor);
 				}
 			}
 
@@ -2549,18 +2701,130 @@
 				window.removeEventListener('mousemove', onDrag);
 			}
 
+			function parseLocationParams() {
+				try {
+					const qs = new URLSearchParams(window.location.search);
+					return {
+						root: qs.get('root') || '',
+						path: qs.get('path') || '',
+						embed: qs.get('embed') || '',
+					};
+				} catch (e) { return { root: '', path: '', embed: '' }; }
+			}
+
+			function looksLikeFilePath(p) {
+				if (!p) return false;
+				const last = p.split('/').filter(Boolean).pop() || '';
+				return last.includes('.');
+			}
+
+			function syncLocationToSelection() {
+				try {
+					const path = (selectedEntry.value && !selectedEntry.value.is_dir)
+						? getEntryFullPath(selectedEntry.value)
+						: (currentPath.value || '');
+					const qs = new URLSearchParams();
+					if (selectedRoot.value) qs.set('root', selectedRoot.value);
+					if (path) qs.set('path', path);
+					const next = window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
+					window.history.replaceState(null, '', next);
+				} catch (e) { /* no-op */ }
+			}
+
+			function buildOpenInTabUrl(entry, options) {
+				const path = entry ? getEntryFullPath(entry) : (currentPath.value || '');
+				const qs = new URLSearchParams();
+				if (selectedRoot.value) qs.set('root', selectedRoot.value);
+				if (path) qs.set('path', path);
+				if (options && options.embed) qs.set('embed', 'preview');
+				return window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
+			}
+
+			function openEntryInNewTab(entry) {
+				const url = buildOpenInTabUrl(entry);
+				try { window.open(url, '_blank', 'noopener'); }
+				catch (e) { window.open(url, '_blank'); }
+			}
+
+			function openInSplit(entry) {
+				if (!entry || entry.is_dir) return;
+				splitFileLabel.value = entry.name || '';
+				splitFileUrl.value = buildOpenInTabUrl(entry, { embed: true });
+			}
+
+			function closeSplit() {
+				splitFileUrl.value = '';
+				splitFileLabel.value = '';
+			}
+
+			function popSplitToTab() {
+				if (!splitFileUrl.value) return;
+				// Strip ?embed=preview when popping to a full-app tab.
+				const noEmbed = splitFileUrl.value.replace(/[?&]embed=preview/, '').replace(/\?$/, '');
+				try { window.open(noEmbed, '_blank', 'noopener'); }
+				catch (e) { window.open(noEmbed, '_blank'); }
+			}
+
+			function startSplitDrag(e) {
+				e.preventDefault();
+				isSplitDragging.value = true;
+				window.addEventListener('mousemove', onSplitDrag);
+				window.addEventListener('mouseup', stopSplitDrag, { once: true });
+			}
+			function onSplitDrag(e) {
+				if (!isSplitDragging.value) return;
+				const container = document.querySelector('.viewer-panels');
+				if (!container) return;
+				const rect = container.getBoundingClientRect();
+				const minW = 240;
+				const maxW = Math.max(minW, rect.width - 320);
+				let w = rect.right - e.clientX;
+				w = Math.max(minW, Math.min(maxW, w));
+				splitPaneWidthPx.value = Math.round(w);
+			}
+			function stopSplitDrag() {
+				isSplitDragging.value = false;
+				window.removeEventListener('mousemove', onSplitDrag);
+			}
+
 			onMounted(async () => {
 				await fetchConfig();
-				await loadList('');
+				const initial = parseLocationParams();
+				embedMode.value = initial.embed === 'preview';
+				if (initial.root) {
+					selectedRoot.value = initial.root;
+					if (!allowedRoots.value.includes(initial.root)) {
+						allowedRoots.value = [...allowedRoots.value, initial.root];
+					}
+					rootPathInput.value = initial.root;
+				}
+				if (initial.path) {
+					if (looksLikeFilePath(initial.path)) {
+						const lastSlash = initial.path.lastIndexOf('/');
+						const parentDir = lastSlash > 0 ? initial.path.slice(0, lastSlash) : initial.path;
+						const fileName = initial.path.slice(lastSlash + 1);
+						await loadList(parentDir, { focusEntryName: fileName });
+					} else {
+						await loadList(initial.path);
+					}
+				} else {
+					await loadList('');
+				}
 				// Focus container to receive keyboard events
 				const focusEl = document.querySelector('[data-fileviewer-focus]');
 				if (focusEl) focusEl.focus();
+				// Global keydown — works regardless of which element is focused (the handler
+				// already ignores events from inputs/textareas/contenteditable elements).
+				window.addEventListener('keydown', onKeyDown);
+				// Keep the URL in sync as the user navigates / changes selection.
+				watch([currentPath, selectedIndex, selectedRoot], syncLocationToSelection);
 			});
 
 			return {
 				allowedRoots,
 				selectedRoot,
 				rootPathInput,
+				showRootControls,
 				leftPanelWidthPx,
 				searchTerm,
 				visibleEntries,
@@ -2617,6 +2881,8 @@
 				minPointSize,
 				maxPointSize,
 				setPointSize,
+				showMeshEdges,
+				meshBackfaceCulling,
 				showModifiedTimes,
 				showThumbnails,
 				thumbnailSize,
@@ -2647,6 +2913,17 @@
 				openAssociatedScript,
 				downloadFile,
 				deleteEntry,
+				openEntryInNewTab,
+				embedMode,
+				splitFileUrl,
+				splitFileLabel,
+				splitPaneWidthPx,
+				openInSplit,
+				closeSplit,
+				popSplitToTab,
+				startSplitDrag,
+				isDragging,
+				isSplitDragging,
 				// multi-select
 				selectionMode,
 				toggleSelectionMode,
